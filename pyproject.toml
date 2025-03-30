@@ -1,0 +1,17 @@
+[project]
+name = "content-curator"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "boto3>=1.37.23",
+    "dotenv>=0.9.9",
+    "feedparser>=6.0.11",
+    "ipython>=9.0.2",
+    "langchain-community>=0.3.20",
+    "langchain>=0.3.21",
+    "loguru>=0.7.3",
+    "markdownify>=1.1.0",
+    "requests>=2.32.3",
+]

@@ -1,0 +1,11 @@
+# --- rss_urls.txt ---
+# Example RSS Feeds (replace with actual valid URLs)
+http://astralcodexten.substack.com/feed
+https://thezvi.substack.com/feed
+https://www.latent.space/feed
+
+# Add URLs for testing different content types if possible
+# https://hnrss.org/newest # Hacker News - often has description only
+
+# RSS feed URLs, one per line
+# Lines starting with # are ignored as comments
