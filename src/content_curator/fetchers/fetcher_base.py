@@ -8,7 +8,7 @@ from loguru import logger
 class Fetcher(ABC):
     """Abstract base class for all content fetchers."""
 
-    def __init__(self, source_identifier: str):
+    def __init__(self, source_identifier: str) -> None:
         """
         Initializes the fetcher.
 
@@ -16,7 +16,7 @@ class Fetcher(ABC):
             source_identifier: A unique name or identifier for the source being fetched
                                (e.g., file path, API endpoint root, channel name).
         """
-        self.source_identifier = source_identifier
+        self.source_identifier: str = source_identifier
         self.logger = logger
         self.logger.info(f"Initializing fetcher for source: {source_identifier}")
 
@@ -35,6 +35,9 @@ class Fetcher(ABC):
     def run(self) -> List[Dict[str, Any]]:
         """
         Public method to execute the fetching process.
+
+        Returns:
+            A list of dictionaries containing the fetched items with their metadata
         """
         self.logger.info(f"Running fetch for source: {self.source_identifier}")
         try:

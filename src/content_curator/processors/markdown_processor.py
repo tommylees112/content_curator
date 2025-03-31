@@ -5,7 +5,7 @@ from langchain_core.documents import Document
 from loguru import logger
 
 
-class ContentProcessor:
+class MarkdownProcessor:
     """Handles content processing tasks like HTML to Markdown conversion and summarization."""
 
     def __init__(self):

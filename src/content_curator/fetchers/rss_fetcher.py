@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional
 import feedparser
 
 from src.content_curator.fetchers.fetcher_base import Fetcher
+from src.content_curator.utils import generate_guid_for_rss_entry
 
 
 class RssFetcher(Fetcher):
@@ -111,15 +112,14 @@ class RssFetcher(Fetcher):
                         # For simplicity, let's use the raw string from feedparser if available
                         published_date = entry.get("published", entry.get("updated"))
 
-                    # Use link or entry ID as a fallback GUID
-                    guid = entry.get("id", link)
-                    if not guid:
-                        # If no ID and no link, we need a way to uniquely identify.
-                        # Hashing title+date could work but is brittle. Log a warning.
+                    # Generate guid using the utility function
+                    guid = generate_guid_for_rss_entry(entry, url, title)
+
+                    # Log warning if guid is potentially unreliable
+                    if guid.startswith(f"{url}::"):
                         self.logger.warning(
                             f"Entry lacks both 'id' and 'link', cannot generate reliable GUID for '{title}' in feed {url}"
                         )
-                        guid = f"{url}::{title}"  # Less reliable fallback
 
                     # Extract HTML content
                     html_content = self._extract_html_content(entry)
