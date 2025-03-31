@@ -57,8 +57,9 @@ class MarkdownProcessor:
         title = item.get("title", "No Title")
         link = item.get("link", "No Link")
         fetch_date = item.get("fetch_date", "Unknown")
+        published_date = item.get("published_date", "Unknown")
 
-        header = f"Date Updated: {fetch_date}\n\nTitle: {title}\n\nURL Source: {link}\n\nMarkdown Content:\n"
+        header = f"Date Updated: {fetch_date}\nDate Published: {published_date}\n\nTitle: {title}\n\nURL Source: {link}\n\nMarkdown Content:\n"
         return header + markdown_content
 
     def process_content(self, items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

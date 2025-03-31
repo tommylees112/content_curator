@@ -127,6 +127,8 @@ class RssFetcher(Fetcher):
                     # Metadata for the item
                     fetch_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+                    # TODO: create a unique title: snakecase {feed_name}_{title}
+
                     item = {
                         "guid": guid,  # Unique identifier for the item
                         "title": title,
