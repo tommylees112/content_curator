@@ -36,6 +36,11 @@ def parse_arguments():
         help="Run the summarization stage to generate summaries",
     )
     parser.add_argument("--all", action="store_true", help="Run all pipeline stages")
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Overwrite existing processed or summarized content",
+    )
 
     # Parse the arguments
     args = parser.parse_args()
@@ -88,7 +93,7 @@ if __name__ == "__main__":
 
     processed_items = []
 
-    # Step 1: Fetch raw content (if enabled)
+    # Step 1: Fetch raw content (if enabled) -> List[Dict]
     if args.fetch:
         # Initialize fetcher
         rss_url_file: Path = (
@@ -125,7 +130,7 @@ if __name__ == "__main__":
                         "source_url": item.get("source_url", ""),
                         "html_content": item.get("html_content", ""),
                         "is_fetched": True,  # Set fetched status to True
-                        "is_processed": True,  # Set processed status to True if this is from the process stage
+                        "is_processed": False,  # Set processed status to True if this is from the process stage
                         "is_summarized": False,  # Initialize as False
                         "is_distributed": False,  # Initialize as False
                         "last_updated": datetime.now().isoformat(),
@@ -139,7 +144,19 @@ if __name__ == "__main__":
         # If we didn't fetch items or fetching was disabled, get items from DynamoDB
         if not args.fetch or not fetched_items:
             logger.info("Loading items with 'processed' status from database...")
-            fetched_items = state_manager.get_items_needing_processing("processed")
+            if args.overwrite:
+                # If overwrite is enabled, get all fetched items regardless of processing status
+                logger.info("Overwrite flag enabled - getting all fetched items...")
+
+                # Get all fetched items
+                fetched_items = state_manager.get_items_by_status_flags(is_fetched=True)
+                fetched_items2 = state_manager.get_items_by_status_flags(
+                    is_fetched=False
+                )
+                fetched_items.extend(fetched_items2)
+            else:
+                # Otherwise, get only items that need processing
+                fetched_items = state_manager.get_items_needing_processing("processed")
 
             if not fetched_items:
                 logger.warning("No items found for processing.")
@@ -209,11 +226,20 @@ if __name__ == "__main__":
         # If we didn't process items or processing was disabled, get processed items from DynamoDB
         if not args.process or not processed_items:
             logger.info("Loading items that have been processed but not summarized...")
-            db_processed_items = state_manager.get_items_by_status_flags(
-                is_processed=True,  # Get items that HAVE been processed
-                is_summarized=False,  # Get items that HAVE NOT been summarized
-                limit=100,  # Keep the limit
-            )
+            if args.overwrite:
+                # If overwrite is enabled, get all processed items regardless of summarization status
+                logger.info("Overwrite flag enabled - getting all processed items...")
+                db_processed_items = state_manager.get_items_by_status_flags(
+                    is_processed=True,
+                    limit=100,
+                )
+            else:
+                # Otherwise, get only items that need summarization
+                db_processed_items = state_manager.get_items_by_status_flags(
+                    is_processed=True,  # Get items that HAVE been processed
+                    is_summarized=False,  # Get items that HAVE NOT been summarized
+                    limit=100,  # Keep the limit
+                )
 
             if not db_processed_items:
                 logger.warning("No items found for summarization.")
