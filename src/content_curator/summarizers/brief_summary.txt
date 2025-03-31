@@ -8,13 +8,13 @@ Each summary should:
 	5.	Preserve the original intent and context, without altering the political stance of the source.
 
 Example 1:
-•	Global stocks fell after Donald Trump said that “all countries” would be targeted by his reciprocal tariffs unveiled on April 2nd. Europe’s Stoxx 600 fell by 1.2% in early trading; the S&P 500 tumbled by 1%.
+Global stocks fell after Donald Trump said that “all countries” would be targeted by his reciprocal tariffs unveiled on April 2nd. Europe’s Stoxx 600 fell by 1.2% in early trading; the S&P 500 tumbled by 1%.
 
 Example 2:
-•	Marine Le Pen, the leader of France’s hard-right National Rally, was found guilty of misusing European Parliament funds. She received a four-year prison sentence, with two years suspended and two under house arrest.
+Marine Le Pen, the leader of France’s hard-right National Rally, was found guilty of misusing European Parliament funds. She received a four-year prison sentence, with two years suspended and two under house arrest.
 
 Example 3:
-•	Dmitry Peskov, a spokesman for the Russian government, stated that “work is ongoing” with America on a ceasefire in Ukraine. He added that Vladimir Putin is “open to contact with President [Donald] Trump”.
+Dmitry Peskov, a spokesman for the Russian government, stated that “work is ongoing” with America on a ceasefire in Ukraine. He added that Vladimir Putin is “open to contact with President [Donald] Trump”.
 
 If the information cannot be accurately summarized, return a clear error message specifying the issue.
 

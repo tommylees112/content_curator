@@ -1,13 +1,21 @@
+import os
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
 
+from dotenv import load_dotenv
+from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_openai import ChatOpenAI
 from loguru import logger
 
 # Define prompt types
 SummaryType = Literal["standard", "brief"]
-ModelName = Literal["gpt-3.5-turbo", "gpt-4-turbo", "gpt-4o"]
+ModelName = Literal[
+    "gemini-1.5-flash", "gemini-2.0-flash", "gpt-3.5-turbo", "gpt-4-turbo", "gpt-4o"
+]
+
+load_dotenv()
 
 
 class Summarizer:
@@ -15,7 +23,7 @@ class Summarizer:
 
     def __init__(
         self,
-        model_name: ModelName = "gpt-4-turbo",
+        model_name: ModelName = "gemini-1.5-flash",
         temperature: float = 0.0,
         max_output_tokens: Optional[int] = None,
     ):
@@ -59,13 +67,43 @@ class Summarizer:
 
         # Initialize the language model
         try:
-            model_kwargs = {}
-            if max_output_tokens is not None:
-                model_kwargs["max_tokens"] = max_output_tokens
+            self.llm: BaseChatModel
 
-            self.llm = ChatOpenAI(
-                model_name=model_name, temperature=temperature, **model_kwargs
-            )
+            if model_name == "gemini-1.5-flash":
+                # Check for Google API key
+                google_api_key = os.environ.get("GOOGLE_API_KEY")
+                if not google_api_key:
+                    self.logger.warning(
+                        "GOOGLE_API_KEY not found in environment variables. "
+                        "Falling back to OpenAI (gpt-4-turbo)."
+                    )
+                    # Fall back to OpenAI if Google API key is not available
+                    model_name = "gpt-4-turbo"
+                else:
+                    # Initialize Gemini model (Gemini 1.5 Flash)
+                    model_kwargs = {}
+                    if max_output_tokens is not None:
+                        model_kwargs["max_output_tokens"] = max_output_tokens
+
+                    self.llm = ChatGoogleGenerativeAI(
+                        model="gemini-1.5-flash",
+                        temperature=temperature,
+                        google_api_key=google_api_key,
+                        **model_kwargs,
+                    )
+                    self.logger.info("Successfully initialized Gemini 1.5 Flash model")
+
+            # Initialize OpenAI model if needed
+            if model_name != "gemini-1.5-flash":
+                model_kwargs = {}
+                if max_output_tokens is not None:
+                    model_kwargs["max_tokens"] = max_output_tokens
+
+                self.llm = ChatOpenAI(
+                    model_name=model_name, temperature=temperature, **model_kwargs
+                )
+                self.logger.info(f"Using OpenAI model: {model_name}")
+
             self.logger.info(
                 f"Initialized summarizer with model: {model_name}, "
                 f"Max Output Tokens: {max_output_tokens or 'Default'}"
@@ -196,7 +234,7 @@ class Summarizer:
 
 
 if __name__ == "__main__":
-    summarizer = Summarizer(model_name="gpt-4-turbo")
+    summarizer = Summarizer(model_name="gemini-1.5-flash")
     test_file = Path(__file__).parents[3] / "data/test.md"
     with open(test_file, "r", encoding="utf-8") as f:
         content = f.read()
