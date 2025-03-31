@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Union
 
 from loguru import logger
 
@@ -6,7 +6,7 @@ from src.content_curator.storage.dynamodb_state import DynamoDBState
 from src.content_curator.storage.s3_storage import S3Storage
 
 
-def check_resources(resource: Literal[DynamoDBState, S3Storage]) -> bool:
+def check_resources(resource: Union[DynamoDBState, S3Storage]) -> bool:
     """
     Check if all required AWS resources exist.
 
