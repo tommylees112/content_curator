@@ -162,12 +162,19 @@ def get_item_display_name(item):
 item_options = {
     get_item_display_name(item): item.get("guid") for item in metadata_items
 }
+
+# Add search functionality
+search_term = st.text_input("Search items", "")
+filtered_options = {
+    k: v for k, v in item_options.items() if search_term.lower() in k.lower()
+}
+
 selected_display_name = st.selectbox(
-    "Select item to view content:", options=item_options.keys()
+    "Select item to view content:", options=filtered_options.keys()
 )
 
 if selected_display_name:
-    selected_guid = item_options[selected_display_name]
+    selected_guid = filtered_options[selected_display_name]
     # Find the full selected item data using the GUID
     # Use next() with a default to handle potential (though unlikely) errors
     selected_item_list = [
@@ -244,15 +251,15 @@ if selected_display_name:
                     # Use the S3Storage class method
                     summary_content = s3_storage.get_content(summary_s3_path)
                     if summary_content:
-                        # Use st.text_area for potentially long summaries
-                        st.text_area(
-                            "Summary Content",
-                            summary_content,
-                            height=400,
-                            key="summary_content",
-                        )
+                        # # Use st.text_area for potentially long summaries
+                        # st.text_area(
+                        #     "Summary Content",
+                        #     summary_content,
+                        #     height=400,
+                        #     key="summary_content",
+                        # )
                         # Or use st.markdown
-                        # st.markdown(summary_content, unsafe_allow_html=False)
+                        st.markdown(summary_content, unsafe_allow_html=False)
                     elif summary_content is None:
                         st.warning(
                             f"Could not retrieve summary from S3 path: {summary_s3_path}. Path might be incorrect or permissions missing."

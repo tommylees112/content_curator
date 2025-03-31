@@ -53,3 +53,7 @@ terraform/.terraform.lock.hcl
 # Temporary files
 /tmp/
 *.tmp
+
+# credentinals and token secrets
+credentials.json
+token.json
