@@ -1,26 +1,13 @@
-import warnings
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
-from langchain.chains.summarize import load_summarize_chain
-from langchain_core.documents import Document
-from langchain_core.language_models import BaseChatModel
-from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from loguru import logger
 
-# Dictionary of known context windows
-MODEL_CONTEXT_WINDOWS = {
-    "gpt-3.5-turbo": 16385,
-    "gpt-4": 8192,
-    "gpt-4-32k": 32768,
-    "gpt-4-turbo": 128000,
-    "gpt-4o": 128000,
-}
-
-# Define prompt names
-STANDARD_PROMPT_NAME = "standard"
-BRIEF_PROMPT_NAME = "brief"
+# Define prompt types
+SummaryType = Literal["standard", "brief"]
+ModelName = Literal["gpt-3.5-turbo", "gpt-4-turbo", "gpt-4o"]
 
 
 class Summarizer:
@@ -28,7 +15,7 @@ class Summarizer:
 
     def __init__(
         self,
-        model_name: str = "gpt-3.5-turbo",
+        model_name: ModelName = "gpt-4-turbo",
         temperature: float = 0.0,
         max_output_tokens: Optional[int] = None,
     ):
@@ -42,25 +29,28 @@ class Summarizer:
         """
         self.logger = logger
         self.model_name = model_name
-        self.max_output_tokens = max_output_tokens
         self.prompt_templates: Dict[str, str] = {}
 
         # Load prompts from files
         summarizer_dir = Path(__file__).parent
         prompt_files = {
-            STANDARD_PROMPT_NAME: summarizer_dir / "standard_summary.txt",
-            BRIEF_PROMPT_NAME: summarizer_dir / "brief_summary.txt",
+            "standard": summarizer_dir / "standard_summary.txt",
+            "brief": summarizer_dir / "brief_summary.txt",
         }
 
-        for name, path in prompt_files.items():
+        for summary_type, path in prompt_files.items():
             try:
                 with open(path, "r", encoding="utf-8") as f:
-                    self.prompt_templates[name] = f.read()
-                self.logger.info(f"Successfully loaded prompt '{name}' from {path}")
+                    self.prompt_templates[summary_type] = f.read()
+                self.logger.info(
+                    f"Successfully loaded '{summary_type}' prompt from {path}"
+                )
             except FileNotFoundError:
                 self.logger.error(f"Prompt file not found: {path}")
             except Exception as e:
-                self.logger.error(f"Failed to load prompt '{name}' from {path}: {e}")
+                self.logger.error(
+                    f"Failed to load '{summary_type}' prompt from {path}: {e}"
+                )
 
         if not self.prompt_templates:
             raise ValueError(
@@ -70,14 +60,15 @@ class Summarizer:
         # Initialize the language model
         try:
             model_kwargs = {}
-            if self.max_output_tokens is not None:
-                model_kwargs["max_tokens"] = self.max_output_tokens
+            if max_output_tokens is not None:
+                model_kwargs["max_tokens"] = max_output_tokens
 
-            self.llm: BaseChatModel = ChatOpenAI(
-                model_name=self.model_name, temperature=temperature, **model_kwargs
+            self.llm = ChatOpenAI(
+                model_name=model_name, temperature=temperature, **model_kwargs
             )
             self.logger.info(
-                f"Initialized summarizer with model: {self.model_name}, Max Output Tokens: {self.max_output_tokens or 'Default'}"
+                f"Initialized summarizer with model: {model_name}, "
+                f"Max Output Tokens: {max_output_tokens or 'Default'}"
             )
 
         except Exception as e:
@@ -86,22 +77,18 @@ class Summarizer:
             )
             raise
 
-    def _get_model_context_window(self) -> Optional[int]:
-        """Gets the context window size for the current model."""
-        return MODEL_CONTEXT_WINDOWS.get(self.model_name)
-
     def summarize_text(
-        self, content: str, prompt_name: str = STANDARD_PROMPT_NAME
+        self, content: str, summary_type: SummaryType = "standard"
     ) -> Optional[str]:
         """
-        Generate a summary of the provided content using a specified prompt template.
+        Generate a summary of the provided content.
 
         Args:
             content: The text content to summarize
-            prompt_name: The name of the prompt template to use (e.g., "standard", "brief")
+            summary_type: The type of summary to generate ("standard" or "brief")
 
         Returns:
-            A summary of the content or None if summarization fails or input is too long
+            A summary of the content or None if summarization fails
         """
         if not content or not isinstance(content, str):
             self.logger.warning(
@@ -109,109 +96,56 @@ class Summarizer:
             )
             return None
 
-        # Get prompt template
-        prompt_template_str = self.prompt_templates.get(prompt_name)
-        if not prompt_template_str:
+        # Get prompt for the specified summary type
+        prompt = self.prompt_templates.get(summary_type)
+        if not prompt:
             self.logger.error(
-                f"Invalid prompt name specified: '{prompt_name}'. Available: {list(self.prompt_templates.keys())}"
+                f"Invalid summary type specified: '{summary_type}'. Available: {list(self.prompt_templates.keys())}"
             )
             return None
 
-        # Get context window
-        context_window = self._get_model_context_window()
-        if context_window:
-            try:
-                # Create the prompt template instance from the loaded string
-                PROMPT = ChatPromptTemplate.from_template(prompt_template_str)
-
-                # Format prompt and count tokens
-                prompt_value = PROMPT.format_prompt(text=content)
-                messages = prompt_value.to_messages()
-                input_tokens = self.llm.get_num_tokens_from_messages(messages)
-                output_buffer = self.max_output_tokens or 500
-
-                # Compare and log/warn
-                if input_tokens + output_buffer >= context_window:
-                    self.logger.warning(
-                        f"Input content (approx. {input_tokens} tokens) for prompt '{prompt_name}' + output buffer ({output_buffer} tokens) "
-                        f"may exceed model's context window ({context_window} tokens) for model '{self.model_name}'. "
-                        f"Skipping summarization."
-                    )
-                    return None
-                else:
-                    self.logger.debug(
-                        f"Input token count ({input_tokens}) + buffer ({output_buffer}) within context window ({context_window}) for prompt '{prompt_name}'."
-                    )
-
-            except Exception as e:
-                self.logger.error(
-                    f"Could not estimate token count for prompt '{prompt_name}': {e}",
-                    exc_info=True,
-                )
-                warnings.warn(
-                    f"Could not estimate token count for model {self.model_name}. Proceeding without check."
-                )
-
-        else:
-            self.logger.warning(
-                f"Context window size not defined for model '{self.model_name}'. Cannot check input length."
-            )
-            warnings.warn(f"Context window size unknown for model {self.model_name}.")
-
         try:
-            # (Re)Create the prompt template instance
-            PROMPT = ChatPromptTemplate.from_template(prompt_template_str)
+            # Create messages with system prompt and content
+            messages = [SystemMessage(content=prompt), HumanMessage(content=content)]
 
-            # Load the summarization chain
-            chain = load_summarize_chain(
-                self.llm,
-                chain_type="stuff",
-                prompt=PROMPT,
-                verbose=False,
-            )
+            # Get response from the LLM
+            response = self.llm.invoke(messages)
 
-            # Create a Document
-            doc = Document(page_content=content)
-
-            # Run the summarization
-            summary_output = chain.invoke([doc])
-
-            # Extract the text
-            summary = (
-                summary_output.get("output_text", "")
-                if isinstance(summary_output, dict)
-                else str(summary_output)
-            )
+            # Extract the summary text
+            summary = response.content.strip()
 
             if summary:
-                self.logger.info(
-                    f"Successfully generated summary using prompt: '{prompt_name}'"
-                )
-                return summary.strip()
+                self.logger.info(f"Successfully generated '{summary_type}' summary")
+                return summary
             else:
                 self.logger.warning(
-                    f"Summarization using prompt '{prompt_name}' did not produce expected output: {summary_output}"
+                    f"'{summary_type}' summarization did not produce expected output"
                 )
                 return None
 
         except Exception as e:
-            self.logger.error(
-                f"Failed to summarize content using prompt '{prompt_name}': {e}",
-                exc_info=True,
-            )
+            self.logger.exception(f"Failed to generate '{summary_type}' summary: {e}")
             return None
 
-    def batch_summarize(self, items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def batch_summarize(
+        self, items: List[Dict[str, Any]], summary_type: SummaryType = "standard"
+    ) -> List[Dict[str, Any]]:
         """
-        Generate standard and short summaries for a batch of items using specific prompts.
+        Generate summaries for a batch of items using the specified summary type.
 
         Args:
             items: List of content items with markdown_content
+            summary_type: The type of summary to generate ("standard" or "brief")
 
         Returns:
-            List of items with added 'summary' and 'short_summary'
+            List of items with added 'summary' if standard or 'short_summary' if brief
         """
         results = []
+        summary_field = "summary" if summary_type == "standard" else "short_summary"
+
+        self.logger.info(
+            f"Batch summarizing {len(items)} items with '{summary_type}' summary type"
+        )
 
         for item in items:
             content = item.get("markdown_content", "")
@@ -219,32 +153,55 @@ class Summarizer:
                 self.logger.warning(
                     f"Skipping item {item.get('guid', 'N/A')} due to missing markdown content."
                 )
-                summary = None
-                short_summary = None
-            else:
-                # Generate standard summary using "standard" prompt
-                summary = self.summarize_text(content, prompt_name=STANDARD_PROMPT_NAME)
-                # Generate short summary using "brief" prompt (via generate_short_summary)
-                short_summary = self.generate_short_summary(content)
+                # Don't modify the item if no content
+                results.append(item.copy())
+                continue
 
-            # Add to results
+            # Generate the requested summary type
+            summary = self.summarize_text(content, summary_type=summary_type)
+
+            # Add to results, preserving existing data
             item_with_summary = item.copy()
-            item_with_summary["summary"] = summary
-            item_with_summary["short_summary"] = short_summary
+            item_with_summary[summary_field] = summary
             results.append(item_with_summary)
 
-        self.logger.info(f"Attempted summarization for {len(results)} items")
+        self.logger.info(f"Generated {summary_type} summaries for {len(results)} items")
         return results
 
-    def generate_short_summary(self, content: str) -> Optional[str]:
+    def batch_summarize_all(self, items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
-        Generate a shorter summary using the 'brief' prompt template.
+        Generate both standard and brief summaries for a batch of items.
+
+        This is a convenience method that calls batch_summarize twice,
+        once for each summary type.
 
         Args:
-            content: The markdown content to summarize
+            items: List of content items with markdown_content
 
         Returns:
-            A short summary or None if summarization fails
+            List of items with added 'summary' and 'short_summary'
         """
-        # Call summarize_text specifically with the BRIEF_PROMPT_NAME
-        return self.summarize_text(content, prompt_name=BRIEF_PROMPT_NAME)
+        # First, generate standard summaries
+        items_with_standard = self.batch_summarize(items, summary_type="standard")
+
+        # Then, generate brief summaries and merge them
+        items_with_both = self.batch_summarize(
+            items_with_standard, summary_type="brief"
+        )
+
+        self.logger.info(
+            f"Generated both summary types for {len(items_with_both)} items"
+        )
+        return items_with_both
+
+
+if __name__ == "__main__":
+    summarizer = Summarizer(model_name="gpt-4-turbo")
+    test_file = Path(__file__).parents[3] / "data/test.md"
+    with open(test_file, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    print("Standard summary:")
+    print(summarizer.summarize_text(content, summary_type="standard"))
+    print("\nBrief summary:")
+    print(summarizer.summarize_text(content, summary_type="brief"))

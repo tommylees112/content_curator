@@ -209,10 +209,10 @@ if __name__ == "__main__":
         # If we didn't process items or processing was disabled, get processed items from DynamoDB
         if not args.process or not processed_items:
             logger.info("Loading items that have been processed but not summarized...")
-            db_processed_items = state_manager.get_items_by_stage_status(
-                stage="processed",  # Items that have been processed
-                status=True,  # Status is True (processed=True)
-                limit=100,
+            db_processed_items = state_manager.get_items_by_status_flags(
+                is_processed=True,  # Get items that HAVE been processed
+                is_summarized=False,  # Get items that HAVE NOT been summarized
+                limit=100,  # Keep the limit
             )
 
             if not db_processed_items:
@@ -245,46 +245,49 @@ if __name__ == "__main__":
         # Initialize summarizer
         logger.info("Summarizing content...")
         summarizer = Summarizer()  # Initialize with default model
-        summarized_items = summarizer.batch_summarize(processed_items)
 
-        # Store summaries in S3 and update metadata
-        for item in summarized_items:
+        # Process each item individually instead of using batch methods
+        summarized_items = []
+        for item in processed_items:
             guid = item.get("guid")
-            summary = item.get("summary")
-            short_summary = item.get(
-                "short_summary", ""
-            )  # Get short summary if available
 
-            if not summary:
+            # Generate summary for this item
+            summary_result = summarizer.summarize_text(
+                item.get("markdown_content", ""), summary_type="standard"
+            )
+            if summary_result:
+                item["summary"] = summary_result
+
+                # Store summary in S3
+                summary_key = f"processed/summaries/{guid}.md"
+                if s3_storage.store_content(summary_key, summary_result):
+                    # Update metadata for this item immediately
+                    updates = {
+                        "is_summarized": True,
+                        "summary_path": summary_key,
+                        "last_updated": datetime.now().isoformat(),
+                    }
+
+                    # Generate brief summary if needed
+                    short_summary_result = summarizer.summarize_text(
+                        item.get("markdown_content", ""), summary_type="brief"
+                    )
+                    if short_summary_result:
+                        item["short_summary"] = short_summary_result
+                        short_summary_key = f"processed/short_summaries/{guid}.md"
+
+                        if s3_storage.store_content(
+                            short_summary_key, short_summary_result
+                        ):
+                            updates["short_summary_path"] = short_summary_key
+
+                    # Update metadata in DynamoDB immediately after processing this item
+                    state_manager.update_metadata(guid=guid, updates=updates)
+                    logger.info(f"Updated metadata for item {guid} after summarization")
+            else:
                 logger.warning(f"No summary generated for item {guid}")
-                continue
 
-            # Store summary in S3
-            summary_key = f"processed/summaries/{guid}.md"
-            short_summary_key = f"processed/short_summaries/{guid}.md"
-
-            # Flag to track if we need to update metadata
-            update_needed = False
-            updates = {
-                "is_summarized": True,  # Set summarized status to True
-                "last_updated": datetime.now().isoformat(),
-            }
-
-            # Store main summary
-            if s3_storage.store_content(summary_key, summary):
-                updates["summary_path"] = summary_key
-                update_needed = True
-
-            # Store short summary if available
-            if short_summary and s3_storage.store_content(
-                short_summary_key, short_summary
-            ):
-                updates["short_summary_path"] = short_summary_key
-                update_needed = True
-
-            # Update metadata in DynamoDB
-            if update_needed:
-                state_manager.update_metadata(guid=guid, updates=updates)
+            summarized_items.append(item)
 
     # Display summary of what was done
     logger.info("--- Pipeline execution completed ---")

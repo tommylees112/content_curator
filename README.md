@@ -6,7 +6,7 @@ A system for fetching, processing, and curating content from various sources.
 
 - Fetches content from RSS/Atom feeds
 - Converts HTML to Markdown
-- Generates summaries of the content
+- Generates standard and brief summaries of the content
 - Stores content and metadata in AWS (S3 and DynamoDB)
 - Sends notifications to Slack
 
@@ -15,7 +15,7 @@ A system for fetching, processing, and curating content from various sources.
 The system is designed with a modular architecture:
 
 - **Fetchers**: Components that fetch content from various sources (currently RSS feeds)
-- **Processors**: Convert and process the content (HTML to Markdown, summarization)
+- **Processors**: Convert and process the content (HTML to Markdown, generation of standard and brief summaries)
 - **Storage**: Store the content and metadata (S3, DynamoDB)
 - **Distributors**: Send notifications about processed content (Slack)
 - **State Management**: Track which items have been processed and their status
@@ -26,34 +26,38 @@ The system uses AWS for storage:
 
 - **S3 Bucket**: Stores the actual content files
   - `markdown/` - Original markdown files from sources ({GUID}.md)
-  - `processed_summaries/` - Summarized content ({GUID}.md)
+  - `processed_summaries/` - Generated standard summaries ({GUID}.md)
   - `daily_updates/` - Generated daily updates ({date}.md)
 
 - **DynamoDB**: Stores metadata
   - Item GUID as the primary key
-  - Metadata includes title, source, timestamps, processing status
+  - Metadata includes title, source, timestamps, processing status, standard summary, brief summary
   - References to file locations in S3
 
 ## Directory Structure
 
 ```
-├── .env.example             # Example environment variables
-├── .gitignore               # Git ignore file
-├── README.md                # Project overview, setup, deployment instructions
-├── pyproject.toml           # Project metadata, dependencies
-├── data/                    # Non-code data files (like URL lists)
-│   └── rss_urls.txt         # List of RSS feed URLs
-├── scripts/                 # Utility scripts
-│   └── run_local_pipeline.py # Script to run the pipeline locally
-├── src/content_curator/     # Main source code package
-│   ├── config.py            # Application configuration
-│   ├── core/                # Core logic, interfaces, shared utilities
-│   ├── fetchers/            # Module for different data fetchers
-│   ├── processors/          # Module for content processing logic
-│   ├── distributors/        # Module for sending content out
-│   ├── storage/             # Module for interacting with data stores
-│   ├── state/               # Module for managing processing state
-│   └── handlers/            # Entry points for cloud functions/services
+├── .env.example # Example environment variables
+├── .gitignore # Git ignore file
+├── README.md # Project overview, setup, deployment instructions
+├── pyproject.toml # Project metadata, dependencies
+├── data/ # Non-code data files (like URL lists)
+│ └── rss_urls.txt # List of RSS feed URLs
+├── scripts/ # Utility scripts
+│ └── run_local_pipeline.py # Script to run the pipeline locally
+├── src/content_curator/ # Main source code package
+│ ├── config.py # Application configuration
+│ ├── core/ # Core logic, interfaces, shared utilities
+│ ├── fetchers/ # Module for different data fetchers
+│ ├── processors/ # Module for content processing logic
+│ │ └── summarizers/ # Module for content summarization // Added summarizers sub-directory
+│ │ ├── summarizer.py # Main summarizer class
+│ │ ├── standard_summary.txt # Prompt for standard summary
+│ │ └── brief_summary.txt # Prompt for brief summary
+│ ├── distributors/ # Module for sending content out
+│ ├── storage/ # Module for interacting with data stores
+│ ├── state/ # Module for managing processing state
+│ └── handlers/ # Entry points for cloud functions/services
 ```
 
 ## Installation
