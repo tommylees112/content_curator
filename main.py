@@ -251,6 +251,9 @@ if __name__ == "__main__":
         for item in summarized_items:
             guid = item.get("guid")
             summary = item.get("summary")
+            short_summary = item.get(
+                "short_summary", ""
+            )  # Get short summary if available
 
             if not summary:
                 logger.warning(f"No summary generated for item {guid}")
@@ -258,16 +261,30 @@ if __name__ == "__main__":
 
             # Store summary in S3
             summary_key = f"processed/summaries/{guid}.md"
+            short_summary_key = f"processed/short_summaries/{guid}.md"
+
+            # Flag to track if we need to update metadata
+            update_needed = False
+            updates = {
+                "is_summarized": True,  # Set summarized status to True
+                "last_updated": datetime.now().isoformat(),
+            }
+
+            # Store main summary
             if s3_storage.store_content(summary_key, summary):
-                # Update metadata in DynamoDB to reflect summarization
-                state_manager.update_metadata(
-                    guid=guid,
-                    updates={
-                        "summary_path": summary_key,
-                        "is_summarized": True,  # Set summarized status to True
-                        "last_updated": datetime.now().isoformat(),
-                    },
-                )
+                updates["summary_path"] = summary_key
+                update_needed = True
+
+            # Store short summary if available
+            if short_summary and s3_storage.store_content(
+                short_summary_key, short_summary
+            ):
+                updates["short_summary_path"] = short_summary_key
+                update_needed = True
+
+            # Update metadata in DynamoDB
+            if update_needed:
+                state_manager.update_metadata(guid=guid, updates=updates)
 
     # Display summary of what was done
     logger.info("--- Pipeline execution completed ---")

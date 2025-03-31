@@ -178,6 +178,82 @@ class DynamoDBState:
             self.logger.error(f"Error getting items needing processing: {e}")
             return []
 
+    def get_items_by_status_flags(
+        self,
+        is_fetched: bool = None,
+        is_processed: bool = None,
+        is_summarized: bool = None,
+        is_distributed: bool = None,
+        limit: int = 100,
+    ) -> List[Dict[str, Any]]:
+        """
+        Get items based on their processing status flags.
+
+        Args:
+            is_fetched: Filter for fetched status
+            is_processed: Filter for processed status
+            is_summarized: Filter for summarized status
+            is_distributed: Filter for distributed status
+            limit: Maximum number of items to return
+
+        Returns:
+            List of matching items
+        """
+        try:
+            # Build the filter expression based on provided flags
+            filter_expression = None
+
+            if is_fetched is not None:
+                filter_expression = boto3.dynamodb.conditions.Attr("is_fetched").eq(
+                    is_fetched
+                )
+
+            if is_processed is not None:
+                new_condition = boto3.dynamodb.conditions.Attr("is_processed").eq(
+                    is_processed
+                )
+                filter_expression = (
+                    new_condition
+                    if filter_expression is None
+                    else filter_expression & new_condition
+                )
+
+            if is_summarized is not None:
+                new_condition = boto3.dynamodb.conditions.Attr("is_summarized").eq(
+                    is_summarized
+                )
+                filter_expression = (
+                    new_condition
+                    if filter_expression is None
+                    else filter_expression & new_condition
+                )
+
+            if is_distributed is not None:
+                new_condition = boto3.dynamodb.conditions.Attr("is_distributed").eq(
+                    is_distributed
+                )
+                filter_expression = (
+                    new_condition
+                    if filter_expression is None
+                    else filter_expression & new_condition
+                )
+
+            # Execute scan with the filter
+            if filter_expression:
+                response = self.table.scan(
+                    FilterExpression=filter_expression,
+                    Limit=limit,
+                )
+            else:
+                response = self.table.scan(Limit=limit)
+
+            items = response.get("Items", [])
+            return items
+
+        except Exception as e:
+            self.logger.error(f"Error getting items by status flags: {e}")
+            return []
+
     def update_metadata(self, guid: str, updates: Dict[str, Any]) -> bool:
         """
         Update metadata fields for an item.

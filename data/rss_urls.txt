@@ -3,6 +3,9 @@
 http://astralcodexten.substack.com/feed
 https://thezvi.substack.com/feed
 https://www.latent.space/feed
+https://newsletter.maartengrootendorst.com/feed
+https://magazine.sebastianraschka.com/feed
+https://newsletter.languagemodels.co/feed
 
 # Add URLs for testing different content types if possible
 # https://hnrss.org/newest # Hacker News - often has description only
