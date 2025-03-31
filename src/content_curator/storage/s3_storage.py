@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import List, Optional
 
 import boto3
 from botocore.client import BaseClient
@@ -89,3 +89,44 @@ class S3Storage:
         except Exception as e:
             self.logger.error(f"Error retrieving content from S3 path {key}: {e}")
             return None
+
+    def object_exists(self, key: str) -> bool:
+        """
+        Check if an object exists in S3 without retrieving its content.
+
+        Args:
+            key: The S3 key (path) to check
+
+        Returns:
+            True if the object exists, False otherwise
+        """
+        try:
+            self.s3.head_object(Bucket=self.s3_bucket_name, Key=key)
+            return True
+        except Exception as e:
+            self.logger.debug(f"Object at S3 path {key} does not exist: {e}")
+            return False
+
+    def list_objects_with_prefix(self, prefix: str, max_items: int = 1000) -> List[str]:
+        """
+        List objects in the S3 bucket with the given prefix.
+
+        Args:
+            prefix: The prefix to filter objects by
+            max_items: Maximum number of items to return
+
+        Returns:
+            List of object keys (paths)
+        """
+        try:
+            response = self.s3.list_objects_v2(
+                Bucket=self.s3_bucket_name, Prefix=prefix, MaxKeys=max_items
+            )
+
+            if "Contents" in response:
+                return [obj["Key"] for obj in response["Contents"]]
+            return []
+
+        except Exception as e:
+            self.logger.error(f"Error listing objects with prefix {prefix}: {e}")
+            return []

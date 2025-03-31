@@ -284,7 +284,16 @@ class DynamoDBState:
                 ExpressionAttributeValues=expression_attribute_values,
             )
 
-            self.logger.info(f"Updated metadata for item {guid}")
+            # Format a readable update summary, excluding last_updated which changes every time
+            update_fields = [
+                f"{k}={v}" for k, v in updates.items() if k != "last_updated"
+            ]
+            if update_fields:
+                update_summary = ", ".join(update_fields)
+                self.logger.info(f"Updated metadata for item {guid}: {update_summary}")
+            else:
+                self.logger.info(f"Updated metadata for item {guid}")
+
             return True
 
         except Exception as e:
