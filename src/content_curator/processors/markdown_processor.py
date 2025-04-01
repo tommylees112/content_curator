@@ -70,13 +70,28 @@ class MarkdownProcessor:
         return header + markdown_content
 
     def is_paywall_or_teaser(
-        self, markdown_content: str, min_failures_to_reject: int = 2
+        self,
+        markdown_content: str,
+        min_content_length: int = 100,
+        paywall_patterns: List[str] = None,
+        max_link_ratio: float = 0.2,
+        min_failures_to_reject: int = 2,
     ) -> bool:
         """
         Detect if content appears to be behind a paywall or is just a teaser.
 
+        The function performs three quality checks:
+        1. Content Length: Fails if content is shorter than min_content_length (default: 100 chars)
+        2. Paywall Patterns: Fails if any paywall-related phrases are found in the first 500 chars
+        3. Link Ratio: Fails if the ratio of markdown links to text length exceeds max_link_ratio (default: 0.2)
+
+        Content is marked as paywall/teaser if at least min_failures_to_reject checks fail.
+
         Args:
             markdown_content: The markdown content to check
+            min_content_length: Minimum text length (in chars) to not be considered too short
+            paywall_patterns: List of regex patterns to detect paywall phrases. If None, uses default patterns
+            max_link_ratio: Maximum allowed ratio of markdown links to text length
             min_failures_to_reject: Minimum number of quality checks that must fail to mark as paywall/teaser
 
         Returns:
@@ -102,27 +117,28 @@ class MarkdownProcessor:
         # Track failed checks
         failed_checks = 0
 
-        # Check for very short content (less than 100 characters of actual text)
-        if len(clean_text) < 100:
+        # Check for very short content
+        if len(clean_text) < min_content_length:
             self.logger.warning(
-                f"Content detected as too short: {len(clean_text)} chars"
+                f"Content detected as too short: {len(clean_text)} chars (minimum: {min_content_length})"
             )
             failed_checks += 1
 
-        # Look for typical paywall phrases
-        paywall_patterns = [
-            r"subscribe now",
-            r"subscribe to continue",
-            r"subscribe for full access",
-            r"read more",
-            r"to continue reading",
-            r"sign up",
-            r"login to continue",
-            r"premium content",
-            r"become a member",
-            r"for subscribers only",
-            r"this content is available to subscribers",
-        ]
+        # Use default patterns if none provided
+        if paywall_patterns is None:
+            paywall_patterns = [
+                r"subscribe now",
+                r"subscribe to continue",
+                r"subscribe for full access",
+                r"read more",
+                r"to continue reading",
+                r"sign up",
+                r"login to continue",
+                r"premium content",
+                r"become a member",
+                r"for subscribers only",
+                r"this content is available to subscribers",
+            ]
 
         # Get text to check for paywall patterns - just the first few paragraphs
         sample_text = clean_text[:500].lower()
@@ -142,8 +158,10 @@ class MarkdownProcessor:
         link_ratio = len(re.findall(r"\[.*?\]\(.*?\)", content_body)) / max(
             1, len(clean_text) / 100
         )
-        if link_ratio > 0.2:  # More than 1 link per 500 chars
-            self.logger.info(f"Content has high link ratio: {link_ratio:.2f}")
+        if link_ratio > max_link_ratio:
+            self.logger.info(
+                f"Content has high link ratio: {link_ratio:.2f} (maximum: {max_link_ratio})"
+            )
             failed_checks += 1
 
         # Only mark as paywall if enough checks failed
