@@ -63,42 +63,47 @@ class NewsletterCurator:
             if item.get(path_field) and item.get("is_summarized", False)
         ]
 
-        # Sort items by published_date in descending order (newest first)
-        # If published_date is not available, fall back to timestamp
-        summarized_items.sort(
-            key=lambda x: x.get("published_date", x.get("timestamp", "")), reverse=True
-        )
-
-        if not summarized_items:
-            self.logger.warning(f"No items with {summary_type} summaries found")
-            return []
-
-        # Apply filtering based on the criteria
-        if most_recent is not None:
-            result = summarized_items[:most_recent]
-            self.logger.info(f"Retrieved {len(result)} most recent items")
-            return result
-
-        elif n_days is not None:
-            # Calculate the cutoff date as a timezone-aware datetime object with UTC timezone
+        # Calculate the cutoff date if needed
+        cutoff_date = None
+        if n_days is not None:
             cutoff_date = datetime.now(timezone.utc) - timedelta(days=n_days)
 
-            # Filter items newer than the cutoff date
-            result = []
-            for item in summarized_items:
-                pub_date_str = item.get("published_date", "")
-                if not pub_date_str:
-                    continue
+        # Process items: parse dates and filter by cutoff date if needed
+        processed_items = []
+        for item in summarized_items:
+            # Get and parse the publication date
+            pub_date_str = item.get("published_date", "")
+            if not pub_date_str:
+                # If no publication date, it can't be filtered by date,
+                # but we'll still include it for the most_recent filter
+                if n_days is None:
+                    processed_items.append((None, item))
+                continue
 
-                # Use our centralized date parsing utility
-                pub_date = parse_date(pub_date_str)
-                if pub_date and pub_date >= cutoff_date:
-                    result.append(item)
+            # Parse the date string to a datetime object
+            pub_date = parse_date(pub_date_str)
 
+            # Add to processed items if it meets the date criteria or if we're not filtering by date
+            if n_days is None or (pub_date and pub_date >= cutoff_date):
+                processed_items.append((pub_date, item))
+
+        # Sort by publication date (newest first)
+        # Items with no date will be at the end
+        processed_items.sort(key=lambda x: x[0] if x[0] else datetime.min, reverse=True)
+
+        # Extract just the items from the sorted list
+        result = [item for _, item in processed_items]
+
+        # Apply the most_recent filter if specified
+        if most_recent is not None:
+            result = result[:most_recent]
+            self.logger.info(f"Retrieved {len(result)} most recent items")
+        else:
             self.logger.info(
                 f"Retrieved {len(result)} items from the last {n_days} days"
             )
-            return result
+
+        return result
 
     def format_recent_content(
         self,
@@ -160,7 +165,7 @@ class NewsletterCurator:
 
             # Format each item
             formatted_content += f"### {title}\n"
-            formatted_content += date_str
+            formatted_content += f"{date_str}\n"
             formatted_content += f"{url}\n"
             formatted_content += f"{summary}\n\n"
 
@@ -171,7 +176,7 @@ class NewsletterCurator:
         most_recent: Optional[int] = None,
         n_days: Optional[int] = None,
         summary_type: Literal["short", "standard"] = "short",
-    ) -> str:
+    ) -> tuple[str, list[str]]:
         """
         Get and format recent content for a newsletter.
 
@@ -181,7 +186,9 @@ class NewsletterCurator:
             summary_type: Type of summary to use ("short" or "standard")
 
         Returns:
-            Formatted content as string
+            Tuple containing:
+                - Formatted content as string
+                - List of item GUIDs included in the newsletter
         """
         # Get recent content
         recent_items = self.get_recent_content(
@@ -193,7 +200,10 @@ class NewsletterCurator:
             items=recent_items, summary_type=summary_type
         )
 
-        return formatted_content
+        # Extract the item GUIDs for tracking newsletter inclusion
+        included_guids = [item.get("guid") for item in recent_items if item.get("guid")]
+
+        return formatted_content, included_guids
 
 
 if __name__ == "__main__":
@@ -219,7 +229,14 @@ if __name__ == "__main__":
 
     # Get short summaries (most recent 5)
     print("SHORT SUMMARIES (MOST RECENT 5):")
-    print(curator.curate_recent_content(n_days=3, summary_type="short"))
+    # content, included_items = curator.curate_recent_content(
+    #     n_days=3, summary_type="short"
+    # )
+    content, included_items = curator.curate_recent_content(
+        most_recent=5, summary_type="short"
+    )
+
+    print(content)
     print("\n" + "=" * 80 + "\n")
 
     # # Get standard summaries (most recent 5)
