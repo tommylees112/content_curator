@@ -34,16 +34,16 @@ jobs:
     - name: Install dependencies
       run: uv sync
 
-    - name: Run fetch stage
+    - name: Run fetch & process stage
       run: |
-        uv run python scripts/main.py --fetch
-
-    - name: Run process stage
-      run: uv run python scripts/main.py --process
+        uv run python scripts/main.py --fetch --process
 
     - name: Run summarize stage
       run: uv run python scripts/main.py --summarize
 
     - name: Run curate stage
       run: uv run python scripts/main.py --curate
+
+    - name: Run distribute stage
+      run: uv run python scripts/main.py --distribute
 

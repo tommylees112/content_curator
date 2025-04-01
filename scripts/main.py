@@ -10,6 +10,7 @@ from loguru import logger
 sys.path.append(str(Path(__file__).parent.parent))
 from src.content_curator.config import config
 from src.content_curator.curator.newsletter_curator import NewsletterCurator
+from src.content_curator.distributors.email_distributor import EmailDistributor
 from src.content_curator.fetchers.rss_fetcher import RSSFetcher
 from src.content_curator.models import ContentItem
 from src.content_curator.processors.markdown_processor import MarkdownProcessor
@@ -50,6 +51,11 @@ def parse_arguments():
         "--curate",
         action="store_true",
         help="Run the curation stage to create newsletters",
+    )
+    parser.add_argument(
+        "--distribute",
+        action="store_true",
+        help="Run the distribution stage to send newsletters via email",
     )
     parser.add_argument("--all", action="store_true", help="Run all pipeline stages")
     parser.add_argument(
@@ -103,6 +109,17 @@ def parse_arguments():
         default=config.default_summary_types,
         help=f"Types of summaries to generate (default: {config.default_summary_types})",
     )
+    parser.add_argument(
+        "--recipient_email",
+        type=str,
+        help="Email address to send the newsletter to. Defaults to the configured default_recipient.",
+    )
+    parser.add_argument(
+        "--s3_key",
+        type=str,
+        default="curated/latest.md",
+        help="S3 key of the newsletter to distribute. Defaults to 'curated/latest.md'.",
+    )
 
     # Parse the arguments
     args = parser.parse_args()
@@ -110,7 +127,13 @@ def parse_arguments():
     # If RSS URL is provided, enable appropriate stages
     if args.rss_url:
         # When an RSS URL is provided, enable all stages by default unless specific stages are requested
-        if not (args.fetch or args.process or args.summarize or args.curate):
+        if not (
+            args.fetch
+            or args.process
+            or args.summarize
+            or args.curate
+            or args.distribute
+        ):
             args.fetch = True
             args.process = True
             args.summarize = True
@@ -123,11 +146,21 @@ def parse_arguments():
             logger.info("Fetch stage enabled automatically for RSS URL processing")
 
     # If no arguments provided or --all specified, run all stages
-    elif not (args.fetch or args.process or args.summarize or args.curate) or args.all:
+    elif (
+        not (
+            args.fetch
+            or args.process
+            or args.summarize
+            or args.curate
+            or args.distribute
+        )
+        or args.all
+    ):
         args.fetch = True
         args.process = True
         args.summarize = True
         args.curate = True
+        args.distribute = True
 
     return args
 
@@ -342,6 +375,35 @@ def save_last_item(processed_items: List[ContentItem], summarize_flag: bool):
         logger.error(f"Error saving markdown content: {e}")
 
 
+def run_distribute_stage(
+    state_manager: DynamoDBState,
+    s3_storage: S3Storage,
+    s3_key: str = "curated/latest.md",
+    recipient_email: Optional[str] = None,
+) -> bool:
+    """Run the distribution stage to send newsletters via email.
+
+    Args:
+        state_manager: DynamoDB state manager
+        s3_storage: S3 storage manager
+        s3_key: The S3 key of the newsletter to distribute
+        recipient_email: Email address to send to (uses configured default if None)
+
+    Returns:
+        True if email was successfully sent, False otherwise
+    """
+    logger.info("Distributing newsletter via email...")
+
+    # Initialize the email distributor
+    distributor = EmailDistributor(s3_storage=s3_storage)
+
+    # Send the email
+    return distributor.distribute(
+        s3_key=s3_key,
+        recipient_email=recipient_email,
+    )
+
+
 def main():
     """Main entry point for the content curation pipeline."""
     logger.info(f"\n{'-' * 50}\nmain.py execution started\n{'-' * 50}\n")
@@ -461,6 +523,20 @@ def main():
                     )
                 except Exception as e:
                     logger.error(f"Error saving {summary_type} newsletter content: {e}")
+
+    # Run distribute stage if enabled
+    if args.distribute:
+        logger.info("\n\nRunning distribute stage...\n\n".upper())
+        success = run_distribute_stage(
+            state_manager,
+            s3_storage,
+            s3_key=args.s3_key,
+            recipient_email=args.recipient_email,
+        )
+        if success:
+            logger.info("Distribution stage completed successfully")
+        else:
+            logger.error("Distribution stage failed")
 
     logger.info(f"Pipeline completed. Log file: {config.log_file}")
 
