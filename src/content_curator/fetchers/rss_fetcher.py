@@ -74,10 +74,13 @@ class RssFetcher(Fetcher):
         )
         return None
 
-    def fetch_items(self) -> List[ContentItem]:
+    def fetch_items(self, specific_id: Optional[str] = None) -> List[ContentItem]:
         """
         Fetches items from all RSS feeds listed in the file or from specific_url.
         If s3_storage is provided, stores the HTML content in S3.
+
+        Args:
+            specific_id: Optional ID of a specific item to fetch
 
         Returns:
             List of ContentItem objects representing fetched content
@@ -182,17 +185,18 @@ class RssFetcher(Fetcher):
         return all_items
 
     def fetch_and_update_state(
-        self, specific_id: Optional[str] = None
+        self, specific_id: Optional[str] = None, overwrite_flag: bool = False
     ) -> List[ContentItem]:
         """
-        Fetches items from RSS feeds and updates DynamoDB state.
+        Fetch content from RSS feeds and update the state in DynamoDB and S3.
         This method encapsulates the entire fetch stage logic.
 
         Args:
             specific_id: Optional ID of a specific item to fetch
+            overwrite_flag: Whether to overwrite existing content
 
         Returns:
-            List of ContentItem objects that were fetched and updated
+            List of fetched ContentItem objects
         """
         if not self.s3_storage or not self.state_manager:
             self.logger.error(
@@ -200,37 +204,27 @@ class RssFetcher(Fetcher):
             )
             return []
 
-        # Handle specific_id case
-        if specific_id and not self.specific_url:
-            item = self.state_manager.get_item(specific_id)
-            if item:
-                return [item]
-            else:
-                self.logger.warning(f"No item found with ID: {specific_id}")
-                return []
-
-        # Fetch items from RSS feeds
-        fetched_items: List[ContentItem] = self.fetch_items()
-
-        if not fetched_items:
-            self.logger.warning("No items were fetched.")
-            return []
-
-        self.logger.info(f"--- Fetched {len(fetched_items)} items ---")
-
-        # Store items to AWS
+        fetched_items = []
         skipped_items = 0
         updated_items = 0
         new_items = 0
 
-        for item in fetched_items:
+        # Fetch items from RSS feeds
+        items = self.fetch_items(specific_id)
+        if not items:
+            self.logger.warning("No items fetched from RSS feeds")
+            return []
+
+        self.logger.info(f"--- Fetched {len(items)} items ---")
+
+        for item in items:
             # Check if item already exists
             if self.state_manager.item_exists(item.guid):
                 # Update existing item
                 existing_item = self.state_manager.get_item(item.guid)
                 if existing_item:
                     # Check if HTML content already exists
-                    if existing_item.html_path:
+                    if existing_item.html_path and not overwrite_flag:
                         self.logger.debug(
                             f"Item {item.guid} already has HTML content at {existing_item.html_path}, will be preserved"
                         )
@@ -253,27 +247,30 @@ class RssFetcher(Fetcher):
                     existing_item.html_path = item.html_path
                     existing_item.last_updated = datetime.now().isoformat()
 
-                    # Restore processing state
-                    existing_item.md_path = md_path
-                    existing_item.summary_path = summary_path
-                    existing_item.short_summary_path = short_summary_path
-                    existing_item.is_paywall = is_paywall
-                    existing_item.to_be_summarized = to_be_summarized
-                    existing_item.newsletters = newsletters
+                    # Only preserve processing state if not overwriting
+                    if not overwrite_flag:
+                        existing_item.md_path = md_path
+                        existing_item.summary_path = summary_path
+                        existing_item.short_summary_path = short_summary_path
+                        existing_item.is_paywall = is_paywall
+                        existing_item.to_be_summarized = to_be_summarized
+                        existing_item.newsletters = newsletters
 
-                    # Update in DynamoDB
-                    self.state_manager.update_item(existing_item)
+                    # Update the item in DynamoDB
+                    self.state_manager.update_item(existing_item, overwrite_flag)
                     updated_items += 1
                     self.logger.debug(
                         f"Updated fetch metadata for item: {item.guid} (preserved processing paths)"
                     )
+                    # Add the updated item to fetched_items
+                    fetched_items.append(existing_item)
             else:
-                # Store new item in DynamoDB
-                self.state_manager.store_item(item)
-                new_items += 1
-                self.logger.debug(
-                    f"Created new item metadata: {item.guid} - '{item.title}'"
-                )
+                # Store new item
+                if self.state_manager.store_item(item):
+                    new_items += 1
+                    self.logger.debug(f"Stored new item: {item.guid}")
+                    # Add the new item to fetched_items
+                    fetched_items.append(item)
 
         # Log summary stats
         if skipped_items > 0:

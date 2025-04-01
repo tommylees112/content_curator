@@ -76,6 +76,11 @@ def parse_arguments():
         default=5,
         help="Maximum number of most recent items to fetch per feed (default: 5). Use 0 for no limit.",
     )
+    parser.add_argument(
+        "--full-summary",
+        action="store_true",
+        help="Generate both brief and full summaries (default: brief only)",
+    )
 
     # Parse the arguments
     args = parser.parse_args()
@@ -139,6 +144,7 @@ def run_fetch_stage(
     specific_id: Optional[str] = None,
     rss_url: Optional[str] = None,
     fetch_max_items: Optional[int] = 5,
+    overwrite_flag: bool = False,
 ) -> List[ContentItem]:
     """Run the fetch stage to get new content."""
     # Initialize fetcher with either a file of URLs or a specific RSS URL
@@ -162,7 +168,7 @@ def run_fetch_stage(
         )
 
     logger.info("Fetching content...")
-    return fetcher.fetch_and_update_state(specific_id)
+    return fetcher.fetch_and_update_state(specific_id, overwrite_flag)
 
 
 def run_process_stage(
@@ -172,6 +178,7 @@ def run_process_stage(
     fetch_flag: bool,
     overwrite_flag: bool,
     specific_id: Optional[str] = None,
+    fetch_max_items: Optional[int] = None,
 ) -> List[ContentItem]:
     """Run the processing stage to convert HTML to markdown."""
     # Initialize processor
@@ -183,12 +190,17 @@ def run_process_stage(
     # If we got items from fetch stage, use those
     if fetch_flag and fetched_items:
         items_to_process = fetched_items
+        logger.debug(f"Using {len(items_to_process)} items passed from fetch stage")
     else:
         # Otherwise, get items from the database using the helper method
+        # Use fetch_max_items as limit if provided, otherwise use default
+        limit = fetch_max_items if fetch_max_items is not None else 100
+        logger.debug(f"Querying for items to process with limit: {limit}")
         items_to_process = state_manager.get_items_for_stage(
             stage="process",
             specific_id=specific_id,
             overwrite_flag=overwrite_flag,
+            limit=limit,
         )
         if not items_to_process:
             logger.warning("No items found for processing.")
@@ -208,8 +220,22 @@ def run_summarize_stage(
     process_flag: bool,
     overwrite_flag: bool,
     specific_id: Optional[str] = None,
+    full_summary: bool = False,
+    fetch_max_items: Optional[int] = None,
 ) -> List[ContentItem]:
-    """Run the summarization stage to generate summaries."""
+    """
+    Run the summarization stage to generate summaries.
+
+    Args:
+        state_manager: DynamoDB state manager
+        s3_storage: S3 storage manager
+        processed_items: Items from process stage
+        process_flag: Whether process stage was run
+        overwrite_flag: Whether to overwrite existing summaries
+        specific_id: Optional specific item ID to process
+        full_summary: If True, generate both brief and full summaries
+        fetch_max_items: Maximum number of items to process
+    """
     # Initialize summarizer
     logger.info("Summarizing content...")
     summarizer = Summarizer(
@@ -221,12 +247,17 @@ def run_summarize_stage(
     # If we got items from process stage, use those
     if process_flag and processed_items:
         items_to_summarize = processed_items
+        logger.debug(f"Using {len(items_to_summarize)} items passed from process stage")
     else:
         # Otherwise, get items from the database using the helper method
+        # Use fetch_max_items as limit if provided, otherwise use default
+        limit = fetch_max_items if fetch_max_items is not None else 100
+        logger.debug(f"Querying for items to summarize with limit: {limit}")
         items_to_summarize = state_manager.get_items_for_stage(
             stage="summarize",
             specific_id=specific_id,
             overwrite_flag=overwrite_flag,
+            limit=limit,
         )
         if not items_to_summarize:
             logger.warning("No items found for summarization.")
@@ -234,8 +265,14 @@ def run_summarize_stage(
 
     logger.info(f"--- Loaded {len(items_to_summarize)} items for summarization ---")
 
+    # Determine summary types based on full_summary flag
+    summary_types = ["brief", "standard"] if full_summary else ["brief"]
+    logger.info(f"Generating summary types: {summary_types}")
+
     # Summarize items and update state
-    return summarizer.summarize_and_update_state(items_to_summarize, overwrite_flag)
+    return summarizer.summarize_and_update_state(
+        items_to_summarize, overwrite_flag, summary_types=summary_types
+    )
 
 
 def run_curate_stage(
@@ -286,9 +323,6 @@ def main():
     # Load environment variables
     load_dotenv()
 
-    # # Set up logging to file
-    # log_file = setup_logging(log_level=os.getenv("LOG_LEVEL", "INFO"))
-
     # Parse command line arguments
     args = parse_arguments()
 
@@ -307,12 +341,23 @@ def main():
     if args.fetch:
         logger.info("\n\nRunning fetch stage...\n\n".upper())
         fetched_items = run_fetch_stage(
-            state_manager, s3_storage, args.id, args.rss_url, args.fetch_max_items
+            state_manager,
+            s3_storage,
+            args.id,
+            args.rss_url,
+            args.fetch_max_items,
+            args.overwrite,
         )
+        logger.info(f"Fetch stage completed with {len(fetched_items)} items")
+        for item in fetched_items:
+            logger.debug(f"Fetched item: {item.guid} - {item.title}")
 
     # Run process stage if enabled
     if args.process:
         logger.info("\n\nRunning process stage...\n\n".upper())
+        logger.debug(
+            f"Process stage starting with {len(fetched_items)} items from fetch stage"
+        )
         processed_items = run_process_stage(
             state_manager,
             s3_storage,
@@ -320,7 +365,11 @@ def main():
             args.fetch,
             args.overwrite,
             args.id,
+            args.fetch_max_items,  # Pass through the fetch_max_items
         )
+        logger.info(f"Process stage completed with {len(processed_items)} items")
+        for item in processed_items:
+            logger.debug(f"Processed item: {item.guid} - {item.title}")
         # Save last processed item if requested
         if args.save_locally:
             save_last_item(processed_items, args.summarize)
@@ -328,6 +377,9 @@ def main():
     # Run summarize stage if enabled
     if args.summarize:
         logger.info("\n\nRunning summarize stage...\n\n".upper())
+        logger.debug(
+            f"Summarize stage starting with {len(processed_items)} items from process stage"
+        )
         summarized_items = run_summarize_stage(
             state_manager,
             s3_storage,
@@ -335,7 +387,12 @@ def main():
             args.process,
             args.overwrite,
             args.id,
+            full_summary=args.full_summary,
+            fetch_max_items=args.fetch_max_items,  # Pass through the fetch_max_items
         )
+        logger.info(f"Summarize stage completed with {len(summarized_items)} items")
+        for item in summarized_items:
+            logger.debug(f"Summarized item: {item.guid} - {item.title}")
         # Save last summarized item if requested (and not already saved in process stage)
         if args.save_locally and not args.process:
             save_last_item(summarized_items, args.summarize)

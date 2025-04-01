@@ -339,63 +339,107 @@ class DynamoDBState:
     ) -> List[ContentItem]:
         """
         Get items that need to be processed for a specific stage.
-        This method encapsulates the common logic for determining which items to retrieve.
+        This is a helper method to centralize the logic for getting items that need processing.
 
         Args:
-            stage: The pipeline stage ("process", "summarize", or "curate")
-            specific_id: Optional ID of a specific item to retrieve
-            overwrite_flag: Whether to include items that have already been processed by this stage
+            stage: The stage to get items for
+            specific_id: Optional specific item ID to process
+            overwrite_flag: Whether to overwrite existing content
             limit: Maximum number of items to return
 
         Returns:
-            List of ContentItem objects suitable for the specified stage
+            List of ContentItem objects that need processing
         """
-        # Handle specific_id case first
+        self.logger.debug(
+            f"Getting items for stage '{stage}' with parameters: specific_id={specific_id}, overwrite_flag={overwrite_flag}, limit={limit}"
+        )
+
         if specific_id:
+            self.logger.debug(f"Processing specific item: {specific_id}")
             item = self.get_item(specific_id)
             if item:
+                self.logger.debug(f"Found specific item: {item.guid}")
                 return [item]
-            else:
-                self.logger.warning(f"No item found with ID: {specific_id}")
-                return []
-
-        # Define criteria based on stage
-        if stage == "process":
-            if overwrite_flag:
-                # Get all items with HTML content
-                return self.get_items_by_status_paths(
-                    html_path_exists=True, as_content_items=True, limit=limit
-                )
-            else:
-                # Get items with HTML content but no markdown
-                return self.get_items_by_status_paths(
-                    html_path_exists=True,
-                    md_path_exists=False,
-                    as_content_items=True,
-                    limit=limit,
-                )
-        elif stage == "summarize":
-            if overwrite_flag:
-                # Get all processed items regardless of summarization status
-                return self.get_items_by_status_paths(
-                    md_path_exists=True, as_content_items=True, limit=limit
-                )
-            else:
-                # Get only items that need summarization (processed but not summarized)
-                return self.get_items_by_status_paths(
-                    md_path_exists=True,
-                    summary_path_exists=False,
-                    as_content_items=True,
-                    limit=limit,
-                )
-        elif stage == "curate":
-            # For curation, we want all summarized items
-            return self.get_items_by_status_paths(
-                summary_path_exists=True, as_content_items=True, limit=limit
-            )
-        else:
-            self.logger.error(f"Invalid stage: {stage}")
             return []
+
+        # Get items based on stage
+        if stage == "process":
+            # Get items that have HTML content but no markdown
+            items = self.get_items_by_status_paths(
+                html_path_exists=True,
+                md_path_exists=False,
+                limit=limit,
+                as_content_items=True,
+            )
+            self.logger.debug(
+                f"Found {len(items)} items needing initial processing (HTML exists but no markdown)"
+            )
+        elif stage == "summarize":
+            # Get items that have markdown but no summary
+            items = self.get_items_by_status_paths(
+                md_path_exists=True,
+                summary_path_exists=False,
+                limit=limit,
+                as_content_items=True,
+            )
+            self.logger.debug(
+                f"Found {len(items)} items needing initial summarization (Markdown exists but no summary)"
+            )
+        else:  # curate
+            # Get items that have summaries but haven't been curated
+            items = self.get_items_by_status_paths(
+                summary_path_exists=True,
+                has_newsletters=False,
+                limit=limit,
+                as_content_items=True,
+            )
+            self.logger.debug(
+                f"Found {len(items)} items needing initial curation (Summary exists but no newsletters)"
+            )
+
+        initial_count = len(items)
+        remaining_limit = limit - initial_count
+        self.logger.debug(
+            f"After initial query: {initial_count} items found, {remaining_limit} slots remaining in limit"
+        )
+
+        # If overwrite is enabled and we haven't hit the limit, also get items that already have the target content
+        if overwrite_flag and remaining_limit > 0:
+            if stage == "process":
+                # Get items that have both HTML and markdown
+                existing_items = self.get_items_by_status_paths(
+                    html_path_exists=True,
+                    md_path_exists=True,
+                    limit=remaining_limit,  # Only get up to remaining limit
+                    as_content_items=True,
+                )
+                self.logger.debug(
+                    f"Found {len(existing_items)} existing items to overwrite for processing (limited by remaining slots: {remaining_limit})"
+                )
+                items.extend(existing_items)
+            elif stage == "summarize":
+                # Get items that have both markdown and summary
+                existing_items = self.get_items_by_status_paths(
+                    md_path_exists=True,
+                    summary_path_exists=True,
+                    limit=remaining_limit,  # Only get up to remaining limit
+                    as_content_items=True,
+                )
+                self.logger.debug(
+                    f"Found {len(existing_items)} existing items to overwrite for summarization (limited by remaining slots: {remaining_limit})"
+                )
+                items.extend(existing_items)
+
+        # Log details about each item being returned
+        self.logger.debug(
+            f"Total items being returned: {len(items)} (limit was {limit})"
+        )
+        for item in items:
+            self.logger.debug(
+                f"Item {item.guid}: HTML={bool(item.html_path)}, MD={bool(item.md_path)}, Summary={bool(item.summary_path)}"
+            )
+
+        return items
 
     def get_items_needing_summarization(
         self, limit: int = 10, as_content_items: bool = True
@@ -452,13 +496,15 @@ class DynamoDBState:
             self.logger.error(f"Error getting items needing summarization: {e}")
             return []
 
-    def update_item(self, item: ContentItem) -> bool:
+    def update_item(self, item: ContentItem, overwrite_flag: bool = False) -> bool:
         """
         Update an item in DynamoDB with the current state of a ContentItem.
-        Preserves existing fields by merging the new item with the existing one.
+        Preserves existing fields by merging the new item with the existing one,
+        unless overwrite_flag is True.
 
         Args:
             item: The ContentItem to update
+            overwrite_flag: If True, completely overwrite the item instead of merging
 
         Returns:
             True if successful, False otherwise
@@ -467,7 +513,7 @@ class DynamoDBState:
             # First, get the existing item to ensure we preserve all fields
             existing_item = self.get_item(item.guid)
 
-            if existing_item:
+            if existing_item and not overwrite_flag:
                 # Create a merged item by starting with existing data
                 # and then updating with the new data (only non-None fields)
                 merged_dict = existing_item.to_dict()
@@ -498,21 +544,9 @@ class DynamoDBState:
                 # Update the item using the existing update_metadata method
                 return self.update_metadata(guid, merged_dict)
             else:
-                # If item doesn't exist yet, just store it normally
-                self.logger.debug(
-                    f"No existing item found for {item.guid}, creating new"
-                )
-
-                # Always update the last_updated timestamp
-                item.last_updated = datetime.now().isoformat()
-
-                # Convert ContentItem to dictionary for DynamoDB
+                # If no existing item or overwrite is enabled, just update with the new item
                 item_dict = item.to_dict()
-
-                # Remove the guid from the updates as it's the key
                 guid = item_dict.pop("guid")
-
-                # Update the item using the existing update_metadata method
                 return self.update_metadata(guid, item_dict)
 
         except Exception as e:

@@ -231,7 +231,7 @@ class MarkdownProcessor:
                         processed_item.md_path = s3_key
 
                     # Update the item in DynamoDB - will now preserve existing fields
-                    self.state_manager.update_item(processed_item)
+                    self.state_manager.update_item(processed_item, overwrite_flag)
                     self.logger.info(
                         f"Updated item '{processed_item.title}' ({processed_item.guid}): stored markdown content at {s3_key}"
                     )

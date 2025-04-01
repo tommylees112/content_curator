@@ -298,6 +298,7 @@ class Summarizer:
         self,
         items_to_summarize: List[ContentItem],
         overwrite_flag: bool = False,
+        summary_types: List[SummaryType] = ["brief"],  # Default to brief only
     ) -> List[ContentItem]:
         """
         Summarize a list of content items and update their state in S3 and DynamoDB.
@@ -306,6 +307,7 @@ class Summarizer:
         Args:
             items_to_summarize: List of ContentItem objects to summarize
             overwrite_flag: Whether to summarize items that are already summarized
+            summary_types: List of summary types to generate. Defaults to ["brief"] for short summaries only.
 
         Returns:
             List of summarized ContentItem objects
@@ -324,17 +326,32 @@ class Summarizer:
 
         for item in items_to_summarize:
             # Check if summaries exist at any possible path
-            has_standard_summary = self._check_summary_at_paths(item, "standard")
-            has_brief_summary = self._check_summary_at_paths(item, "brief")
+            has_standard_summary = (
+                "standard" in summary_types
+                and self._check_summary_at_paths(item, "standard")
+            )
+            has_brief_summary = (
+                "brief" in summary_types and self._check_summary_at_paths(item, "brief")
+            )
 
             self.logger.info(
                 f"Item {item.guid} has standard summary: {has_standard_summary}, brief summary: {has_brief_summary}"
             )
 
             # Skip already summarized items unless overwrite is enabled
-            if has_standard_summary and has_brief_summary and not overwrite_flag:
+            if (
+                all(
+                    has_summary
+                    for summary_type, has_summary in [
+                        ("standard", has_standard_summary),
+                        ("brief", has_brief_summary),
+                    ]
+                    if summary_type in summary_types
+                )
+                and not overwrite_flag
+            ):
                 self.logger.info(
-                    f"Item '{item.title}' ({item.guid}) already has both summaries, skipping summarization"
+                    f"Item '{item.title}' ({item.guid}) already has requested summaries, skipping summarization"
                 )
                 summarized_items.append(item)
                 skipped_already_summarized += 1
@@ -373,7 +390,7 @@ class Summarizer:
                     self.logger.info(f"Item {item.guid} marked for summarization")
 
             # Update the database with our determination
-            self.state_manager.update_item(item)
+            self.state_manager.update_item(item, overwrite_flag)
 
             # Skip items not worth summarizing
             if not item.to_be_summarized:
@@ -386,27 +403,28 @@ class Summarizer:
 
             summarized = False
 
-            # Generate missing standard summary for this item if needed
-            if not has_standard_summary or overwrite_flag:
-                self.logger.info(f"Generating standard summary for {item.guid}")
-                item = self.summarize_item(item, summary_type="standard")
-                if item.summary and item.summary_path:
-                    self.s3_storage.store_content(item.summary_path, item.summary)
-                    summarized = True
+            # Generate summaries based on requested types
+            if "standard" in summary_types:
+                if not has_standard_summary or overwrite_flag:
+                    self.logger.info(f"Generating standard summary for {item.guid}")
+                    item = self.summarize_item(item, summary_type="standard")
+                    if item.summary and item.summary_path:
+                        self.s3_storage.store_content(item.summary_path, item.summary)
+                        summarized = True
 
-            # Generate missing brief summary for this item if needed
-            if not has_brief_summary or overwrite_flag:
-                self.logger.info(f"Generating brief summary for {item.guid}")
-                item = self.summarize_item(item, summary_type="brief")
-                if item.short_summary and item.short_summary_path:
-                    self.s3_storage.store_content(
-                        item.short_summary_path, item.short_summary
-                    )
-                    summarized = True
+            if "brief" in summary_types:
+                if not has_brief_summary or overwrite_flag:
+                    self.logger.info(f"Generating brief summary for {item.guid}")
+                    item = self.summarize_item(item, summary_type="brief")
+                    if item.short_summary and item.short_summary_path:
+                        self.s3_storage.store_content(
+                            item.short_summary_path, item.short_summary
+                        )
+                        summarized = True
 
             # Update the item in DynamoDB only if we actually generated summaries
             if summarized:
-                self.state_manager.update_item(item)
+                self.state_manager.update_item(item, overwrite_flag)
                 self.logger.info(
                     f"Updated item '{item.title}' ({item.guid}): stored summaries"
                 )
