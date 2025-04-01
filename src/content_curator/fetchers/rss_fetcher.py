@@ -3,15 +3,15 @@ from typing import List, Optional
 
 import feedparser
 
+from src.content_curator.config import config
 from src.content_curator.fetchers.fetcher_base import Fetcher
-from src.content_curator.fetchers.fetcher_utils import get_urls_for_fetch
 from src.content_curator.models import ContentItem
 from src.content_curator.storage.dynamodb_state import DynamoDBState
 from src.content_curator.storage.s3_storage import S3Storage
 from src.content_curator.utils import generate_guid_for_rss_entry
 
 
-class RssFetcher(Fetcher):
+class RSSFetcher(Fetcher):
     """Fetcher implementation for RSS and Atom feeds."""
 
     def __init__(
@@ -38,13 +38,19 @@ class RssFetcher(Fetcher):
         super().__init__(source_identifier=source_identifier)
         self.url_file_path = url_file_path
         self.specific_url = specific_url
-        self.max_items = max_items
+        self.max_items = max_items or config.rss_default_max_items
         self.s3_storage = s3_storage
         self.state_manager = state_manager
 
     def _read_urls_from_file(self) -> List[str]:
         """Gets URLs either from file or from specific_url parameter."""
-        return get_urls_for_fetch(self.url_file_path, self.specific_url)
+        if self.specific_url:
+            return [self.specific_url]
+        elif self.url_file_path:
+            with open(self.url_file_path, "r") as f:
+                return [line.strip() for line in f if line.strip()]
+        else:
+            raise ValueError("Either specific_url or url_file_path must be provided")
 
     def _extract_html_content(self, entry: feedparser.FeedParserDict) -> Optional[str]:
         """
@@ -287,10 +293,10 @@ class RssFetcher(Fetcher):
 if __name__ == "__main__":
     # Test the RSS Fetcher
     # uv run python -m src.content_curator.fetchers.rss_fetcher
-    # fetcher = RssFetcher(url_file_path="data/rss_urls.txt", max_items=5)
+    # fetcher = RSSFetcher(url_file_path="data/rss_urls.txt", max_items=5)
     # items = fetcher.fetch_items()
 
-    fetcher = RssFetcher(specific_url="https://www.lesswrong.com/feed.xml")
+    fetcher = RSSFetcher(specific_url="https://www.lesswrong.com/feed.xml")
     items = fetcher.fetch_items()
 
     # Print example of content item

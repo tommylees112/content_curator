@@ -22,12 +22,36 @@ The system is designed with a modular architecture:
 - **Distributors**: Send notifications about processed content (Slack)
 - **State Management**: Track which items have been processed and their status
 
-RssFetcher: Responsible only for fetching content from RSS feeds and returning structured data (like raw HTML, title, link, dates). It might interact with storage to save the raw HTML, but shouldn't know about processing or summarization statuses.
+RSSFetcher: Responsible only for fetching content from RSS feeds and returning structured data (like raw HTML, title, link, dates). It might interact with storage to save the raw HTML, but shouldn't know about processing or summarization statuses.
 MarkdownProcessor: Takes raw HTML (or a reference like an S3 path), converts it to Markdown, determines if it's suitable for summarization (is_paywall, length checks), and returns the Markdown content and flags. It interacts with storage to get HTML and save Markdown.
 Summarizer: Takes Markdown content (or a reference), generates summaries, and returns them. Interacts with storage to get Markdown and save summaries.
 NewsletterCurator: Queries the DynamoDBState for items meeting curation criteria (e.g., summarized recently), fetches necessary summaries using S3Storage, formats the newsletter, saves it using S3Storage, and potentially updates item state via DynamoDBState.
 DynamoDBState & S3Storage: Solely responsible for interacting with AWS DynamoDB and S3 respectively. No business logic like parsing or summarization should exist here.
 
+Pipeline Components:
+1. Fetchers (Input Layer)
+   - RSSFetcher
+   - Future: WebFetcher, APIFetcher, etc.
+   Interface: fetch() -> List[ContentItem]
+
+2. Processors (Transform Layer)
+   - MarkdownProcessor
+   - Future: PDFProcessor, DocProcessor, etc.
+   Interface: process(item: ContentItem) -> ContentItem
+
+3. Enrichers (Enrichment Layer)
+   - Summarizer
+   - Future: Categorizer, KeywordExtractor, etc.
+   Interface: enrich(item: ContentItem) -> ContentItem
+
+4. Curators (Output Layer)
+   - NewsletterCurator
+   - Future: SlackCurator, EmailCurator, etc.
+   Interface: curate(items: List[ContentItem]) -> OutputType
+
+Storage Layer:
+- S3Storage: Content storage
+- DynamoDBState: Metadata/state management
 
 ## AWS Storage Structure
 

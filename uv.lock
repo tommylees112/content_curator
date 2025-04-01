@@ -306,6 +306,7 @@ dependencies = [
     { name = "loguru" },
     { name = "markdownify" },
     { name = "pandas" },
+    { name = "pyyaml" },
     { name = "requests" },
     { name = "streamlit" },
 ]
@@ -323,6 +324,7 @@ requires-dist = [
     { name = "loguru", specifier = ">=0.7.3" },
     { name = "markdownify", specifier = ">=1.1.0" },
     { name = "pandas", specifier = ">=2.2.3" },
+    { name = "pyyaml", specifier = ">=6.0.2" },
     { name = "requests", specifier = ">=2.32.3" },
     { name = "streamlit", specifier = ">=1.44.0" },
 ]

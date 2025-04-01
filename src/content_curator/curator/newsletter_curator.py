@@ -278,7 +278,7 @@ if __name__ == "__main__":
         "AWS_DYNAMODB_TABLE_NAME", "content-curator-metadata"
     )
     aws_region: str = os.getenv("AWS_REGION", "us-east-1")
-    s3_bucket_name: str = os.getenv("AWS_S3_BUCKET_NAME", "content-curator-bucket")
+    s3_bucket_name: str = os.getenv("AWS_S3_BUCKET_NAME", "content-curator")
 
     # Initialize services
     state_manager = DynamoDBState(

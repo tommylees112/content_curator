@@ -20,7 +20,7 @@ from src.content_curator.storage import DynamoDBState, S3Storage
 load_dotenv()
 
 # Get AWS config from environment variables (provide defaults from your main.py)
-S3_BUCKET_NAME = os.getenv("AWS_S3_BUCKET_NAME", "content-curator-bucket")
+S3_BUCKET_NAME = os.getenv("AWS_S3_BUCKET_NAME", "content-curator")
 DYNAMODB_TABLE_NAME = os.getenv("AWS_DYNAMODB_TABLE_NAME", "content-curator-metadata")
 AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
 

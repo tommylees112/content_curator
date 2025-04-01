@@ -17,11 +17,11 @@ from src.content_curator.utils import check_resources
 def setup_services():
     """Initialize and check AWS services."""
     # Get AWS configuration from environment variables
-    s3_bucket_name = os.getenv("AWS_S3_BUCKET_NAME", "content-curator-bucket")
+    aws_region = os.getenv("AWS_REGION", "us-east-1")
+    s3_bucket_name = os.getenv("AWS_S3_BUCKET_NAME", "content-curator")
     dynamodb_table_name = os.getenv(
         "AWS_DYNAMODB_TABLE_NAME", "content-curator-metadata"
     )
-    aws_region = os.getenv("AWS_REGION", "us-east-1")
 
     # Initialize services
     state_manager = DynamoDBState(

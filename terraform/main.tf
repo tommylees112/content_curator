@@ -18,8 +18,9 @@ variable "aws_region" {
 }
 
 variable "s3_bucket_name" {
-  description = "Name of the S3 bucket to store content"
-  default     = "content-curator-bucket"
+  description = "Name of the S3 bucket for storing content"
+  type        = string
+  default     = "content-curator"
 }
 
 variable "dynamodb_table_name" {

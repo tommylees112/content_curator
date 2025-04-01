@@ -1,0 +1,36 @@
+# AWS Configuration
+# Contains all AWS-related settings including region, S3 bucket configuration, and DynamoDB table settings
+aws:
+  region: eu-north-1  # AWS region for all services
+  s3:
+    bucket_name: content-curator  # Name of the S3 bucket for storing content
+  dynamodb:
+    table_name: content-curator-metadata  # DynamoDB table for storing content metadata
+
+# Logging Configuration
+# Controls how the application logs are generated and stored
+logging:
+  file: content_curator.log  # Name of the log file
+  rotation: 10 MB  # Maximum size of each log file before rotation
+  retention: 5  # Number of rotated log files to keep
+  level: DEBUG  # Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+  format: "{time:YYYY-MM-DD HH:mm:ss} | {level} | {message} | {extra}"  # Log message format
+
+# Pipeline Configuration
+# Global settings for the content curation pipeline
+# pipeline:
+
+curator:
+  default_most_recent: 10  # Default number of most recent items to include in newsletters
+
+# RSS Configuration
+# Settings specific to RSS feed processing
+rss:
+  rss_url_file: data/rss_urls.txt  # Path to file containing RSS feed URLs
+  default_max_items: 5  # Maximum number of items to fetch from each RSS feed
+
+# Summarizer Configuration
+# Settings for the content summarization process
+summarizer:
+  model_name: gemini-1.5-flash  # Name of the AI model to use for summarization
+  default_summary_types: ["brief"]  # Types of summaries to generate by default 

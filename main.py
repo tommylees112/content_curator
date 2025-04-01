@@ -1,14 +1,15 @@
 import argparse
-import os
 import sys
 from pathlib import Path
 from typing import List, Optional, Tuple
 
+import yaml
 from dotenv import load_dotenv
 from loguru import logger
 
+from src.content_curator.config import config
 from src.content_curator.curator.newsletter_curator import NewsletterCurator
-from src.content_curator.fetchers.rss_fetcher import RssFetcher
+from src.content_curator.fetchers.rss_fetcher import RSSFetcher
 from src.content_curator.models import ContentItem
 from src.content_curator.processors.markdown_processor import MarkdownProcessor
 from src.content_curator.storage.dynamodb_state import DynamoDBState
@@ -16,13 +17,13 @@ from src.content_curator.storage.s3_storage import S3Storage
 from src.content_curator.summarizers.summarizer import Summarizer
 from src.content_curator.utils import check_resources
 
-log_file = "content_curator.log"
+# Configure logging
 logger.add(
-    log_file,
-    rotation="10 MB",
-    retention=5,
-    level="DEBUG",
-    format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {message} | {extra}",
+    config.log_file,
+    rotation=config.log_rotation,
+    retention=config.log_retention,
+    level=config.log_level,
+    format=config.log_format,
 )
 
 
@@ -71,15 +72,35 @@ def parse_arguments():
         help="Process all items from a specific RSS feed URL. Uses the fetch stage to get content from this feed.",
     )
     parser.add_argument(
+        "--rss_url_file",
+        type=str,
+        help="Path to the text file containing RSS feed URLs (one per line).",
+        default=config.rss_url_file,
+    )
+
+    parser.add_argument(
         "--fetch_max_items",
         type=int,
-        default=5,
-        help="Maximum number of most recent items to fetch per feed (default: 5). Use 0 for no limit.",
+        default=config.rss_default_max_items,
+        help=f"Maximum number of most recent items to fetch per feed (default: {config.rss_default_max_items}). Use 0 for no limit.",
     )
     parser.add_argument(
         "--full-summary",
         action="store_true",
         help="Generate both brief and full summaries (default: brief only)",
+    )
+    parser.add_argument(
+        "--most_recent",
+        type=int,
+        default=config.default_most_recent,
+        help=f"Number of most recent items to include in newsletters (default: {config.default_most_recent})",
+    )
+    parser.add_argument(
+        "--summary_types",
+        type=str,
+        nargs="+",
+        default=config.default_summary_types,
+        help=f"Types of summaries to generate (default: {config.default_summary_types})",
     )
 
     # Parse the arguments
@@ -112,18 +133,15 @@ def parse_arguments():
 
 def setup_services() -> Tuple[DynamoDBState, S3Storage]:
     """Initialize and check AWS services."""
-    # Get AWS configuration from environment variables
-    s3_bucket_name: str = os.getenv("AWS_S3_BUCKET_NAME", "content-curator-bucket")
-    dynamodb_table_name: str = os.getenv(
-        "AWS_DYNAMODB_TABLE_NAME", "content-curator-metadata"
-    )
-    aws_region: str = os.getenv("AWS_REGION", "us-east-1")
-
-    # Initialize services
+    # Initialize services with config values
     state_manager = DynamoDBState(
-        dynamodb_table_name=dynamodb_table_name, aws_region=aws_region
+        dynamodb_table_name=config.dynamodb_table_name,
+        aws_region=config.aws_region,
     )
-    s3_storage = S3Storage(s3_bucket_name=s3_bucket_name, aws_region=aws_region)
+    s3_storage = S3Storage(
+        s3_bucket_name=config.s3_bucket_name,
+        aws_region=config.aws_region,
+    )
 
     # Check if resources exist
     s3_exists = check_resources(s3_storage)
@@ -143,26 +161,26 @@ def run_fetch_stage(
     s3_storage: S3Storage,
     specific_id: Optional[str] = None,
     rss_url: Optional[str] = None,
-    fetch_max_items: Optional[int] = 5,
+    rss_url_file: Optional[Path] = Path(__file__).parent / "data" / "rss_urls.txt",
+    fetch_max_items: Optional[int] = None,
     overwrite_flag: bool = False,
 ) -> List[ContentItem]:
     """Run the fetch stage to get new content."""
     # Initialize fetcher with either a file of URLs or a specific RSS URL
     if rss_url:
-        # Create RssFetcher with the specific RSS URL
+        # Create RSSFetcher with the specific RSS URL
         logger.info(f"Fetching from RSS URL: {rss_url}")
-        fetcher = RssFetcher(
-            max_items=fetch_max_items,
+        fetcher = RSSFetcher(
+            max_items=fetch_max_items or config.rss_default_max_items,
             specific_url=rss_url,
             s3_storage=s3_storage,
             state_manager=state_manager,
         )
     else:
-        # Use the default file of RSS URLs
-        rss_url_file: Path = Path(__file__).parent / "data" / "rss_urls.txt"
-        fetcher = RssFetcher(
+        # Use the file of RSS URLs
+        fetcher = RSSFetcher(
             url_file_path=str(rss_url_file),
-            max_items=fetch_max_items,
+            max_items=fetch_max_items or config.rss_default_max_items,
             s3_storage=s3_storage,
             state_manager=state_manager,
         )
@@ -222,6 +240,7 @@ def run_summarize_stage(
     specific_id: Optional[str] = None,
     full_summary: bool = False,
     fetch_max_items: Optional[int] = None,
+    summary_types: List[str] = None,
 ) -> List[ContentItem]:
     """
     Run the summarization stage to generate summaries.
@@ -235,11 +254,12 @@ def run_summarize_stage(
         specific_id: Optional specific item ID to process
         full_summary: If True, generate both brief and full summaries
         fetch_max_items: Maximum number of items to process
+        summary_types: List of summary types to generate
     """
     # Initialize summarizer
     logger.info("Summarizing content...")
     summarizer = Summarizer(
-        model_name="gemini-1.5-flash",
+        model_name=config.summarizer_model_name,
         s3_storage=s3_storage,
         state_manager=state_manager,
     )
@@ -266,19 +286,21 @@ def run_summarize_stage(
     logger.info(f"--- Loaded {len(items_to_summarize)} items for summarization ---")
 
     # Determine summary types based on full_summary flag
-    summary_types = ["brief", "standard"] if full_summary else ["brief"]
-    logger.info(f"Generating summary types: {summary_types}")
+    types_to_generate = summary_types or config.default_summary_types
+    if full_summary:
+        types_to_generate = ["brief", "standard"]
+    logger.info(f"Generating summary types: {types_to_generate}")
 
     # Summarize items and update state
     return summarizer.summarize_and_update_state(
-        items_to_summarize, overwrite_flag, summary_types=summary_types
+        items_to_summarize, overwrite_flag, summary_types=types_to_generate
     )
 
 
 def run_curate_stage(
     state_manager: DynamoDBState,
     s3_storage: S3Storage,
-    most_recent: Optional[int] = 5,
+    most_recent: Optional[int] = None,
     n_days: Optional[int] = None,
     summary_type: str = "short",
 ) -> str:
@@ -290,7 +312,9 @@ def run_curate_stage(
 
     # Generate newsletter and save to S3
     return curator.curate_and_update_state(
-        most_recent=most_recent, n_days=n_days, summary_type=summary_type
+        most_recent=most_recent or config.default_most_recent,
+        n_days=n_days,
+        summary_type=summary_type,
     )
 
 
@@ -320,6 +344,13 @@ def save_last_item(processed_items: List[ContentItem], summarize_flag: bool):
 def main():
     """Main entry point for the content curation pipeline."""
     logger.info(f"\n{'-' * 50}\nmain.py execution started\n{'-' * 50}\n")
+
+    # Log the configuration in YAML format
+    logger.info(
+        "Configuration:\n{}",
+        yaml.dump(config.config, default_flow_style=False, sort_keys=False),
+    )
+
     # Load environment variables
     load_dotenv()
 
@@ -345,6 +376,7 @@ def main():
             s3_storage,
             args.id,
             args.rss_url,
+            args.rss_url_file,
             args.fetch_max_items,
             args.overwrite,
         )
@@ -365,7 +397,7 @@ def main():
             args.fetch,
             args.overwrite,
             args.id,
-            args.fetch_max_items,  # Pass through the fetch_max_items
+            args.fetch_max_items,
         )
         logger.info(f"Process stage completed with {len(processed_items)} items")
         for item in processed_items:
@@ -388,7 +420,8 @@ def main():
             args.overwrite,
             args.id,
             full_summary=args.full_summary,
-            fetch_max_items=args.fetch_max_items,  # Pass through the fetch_max_items
+            fetch_max_items=args.fetch_max_items,
+            summary_types=args.summary_types,
         )
         logger.info(f"Summarize stage completed with {len(summarized_items)} items")
         for item in summarized_items:
@@ -398,13 +431,12 @@ def main():
             save_last_item(summarized_items, args.summarize)
 
     # Run curate stage if enabled
-    # if args.curate:
-    if False:
+    if args.curate:
         logger.info("\n\nRunning curate stage...\n\n".upper())
         curated_content = run_curate_stage(
             state_manager,
             s3_storage,
-            most_recent=10,  # Default to 10 most recent items
+            most_recent=args.most_recent,
         )
         # Optionally save to local file for debugging
         if curated_content and args.save_locally:
@@ -416,7 +448,7 @@ def main():
             except Exception as e:
                 logger.error(f"Error saving newsletter content: {e}")
 
-    logger.info(f"Pipeline completed. Log file: {log_file}")
+    logger.info(f"Pipeline completed. Log file: {config.log_file}")
 
 
 if __name__ == "__main__":
