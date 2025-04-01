@@ -93,6 +93,14 @@ class Config:
             default="{time:YYYY-MM-DD HH:mm:ss} | {level} | {message} | {extra}",
         )
 
+    # @property
+    # def pipeline_log_file_path(self) -> Path:
+    #     """Get the Path object for the daily pipeline log file."""
+    #     log_dir = self.project_root / "logs"
+    #     log_dir.mkdir(parents=True, exist_ok=True)
+    #     log_filename = f"pipeline_{date.today().isoformat()}.log"
+    #     return log_dir / log_filename
+
     @property
     def default_most_recent(self) -> int:
         """Get default number of most recent items."""

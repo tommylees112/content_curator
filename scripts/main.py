@@ -19,13 +19,13 @@ from src.content_curator.summarizers.summarizer import Summarizer
 from src.content_curator.utils import check_resources
 
 # Configure logging
-logger.add(
-    config.log_file,
-    rotation=config.log_rotation,
-    retention=config.log_retention,
-    level=config.log_level,
-    format=config.log_format,
-)
+# logger.add(
+#     config.pipeline_log_file_path,
+#     rotation=config.log_rotation,
+#     retention=config.log_retention,
+#     level=config.log_level,
+#     format=config.log_format,
+# )
 
 
 def parse_arguments():
@@ -403,6 +403,7 @@ def main():
         logger.info(f"Process stage completed with {len(processed_items)} items")
         for item in processed_items:
             logger.debug(f"Processed item: {item.guid} - {item.title}")
+
         # Save last processed item if requested
         if args.save_locally:
             save_last_item(processed_items, args.summarize)
@@ -427,6 +428,7 @@ def main():
         logger.info(f"Summarize stage completed with {len(summarized_items)} items")
         for item in summarized_items:
             logger.debug(f"Summarized item: {item.guid} - {item.title}")
+
         # Save last summarized item if requested (and not already saved in process stage)
         if args.save_locally and not args.process:
             save_last_item(summarized_items, args.summarize)

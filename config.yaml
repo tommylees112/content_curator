@@ -10,7 +10,7 @@ aws:
 # Logging Configuration
 # Controls how the application logs are generated and stored
 logging:
-  file: content_curator.log  # Name of the log file
+  file:  # Name of the log file
   rotation: 10 MB  # Maximum size of each log file before rotation
   retention: 5  # Number of rotated log files to keep
   level: DEBUG  # Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
