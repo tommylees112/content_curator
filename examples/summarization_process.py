@@ -6,24 +6,70 @@ from pathlib import Path
 from dotenv import load_dotenv
 from loguru import logger
 
-from src.content_curator.aws_storage import AwsStorage
-
 sys.path.append(str(Path(__file__).parent.parent))
 
+from src.content_curator.models import ContentItem
+from src.content_curator.storage.dynamodb_state import DynamoDBState
+from src.content_curator.storage.s3_storage import S3Storage
+from src.content_curator.summarizers.summarizer import Summarizer
+from src.content_curator.utils import check_resources
 
-def summarize_content(content: str) -> str:
+
+def summarize_content(item: ContentItem, s3_storage, summarizer):
     """
-    Example function that would summarize the content.
-    Replace with your actual summarization logic.
+    Generate a summary for a given content item and store it in S3.
+
+    Args:
+        item: ContentItem object to summarize
+        s3_storage: S3Storage object for accessing content
+        summarizer: Summarizer object to generate summaries
+
+    Returns:
+        Updated ContentItem with summary information
     """
-    # This is just a placeholder - implement your actual summarization here
-    summary = f"## Summary\n\nThis is a summary of: {content[:100]}...\n\nGenerated on: {datetime.now().isoformat()}"
-    return summary
+    guid = item.guid
+    md_path = item.md_path
+
+    if not md_path:
+        logger.warning(f"Item {guid} has no md_path, skipping")
+        return None
+
+    # Get content from S3
+    content = s3_storage.get_content(md_path)
+    if not content:
+        logger.warning(f"Failed to retrieve content for {guid} at {md_path}")
+        return None
+
+    # Generate summary
+    logger.info(f"Generating summary for item {guid}")
+    try:
+        summary = summarizer.create_summary(content)
+        short_summary = summarizer.create_short_summary(content)
+
+        # Store summaries in S3
+        summary_path = f"processed/summaries/{guid}.md"
+        short_summary_path = f"processed/short_summaries/{guid}.md"
+
+        s3_storage.store_content(summary_path, summary)
+        s3_storage.store_content(short_summary_path, short_summary)
+
+        # Update item with summary information
+        item.is_summarized = True
+        item.summary_path = summary_path
+        item.short_summary_path = short_summary_path
+        item.last_updated = datetime.now().isoformat()
+
+        return item
+
+    except Exception as e:
+        logger.error(f"Error summarizing content for {guid}: {str(e)}")
+        return None
 
 
 def run_summarization_process():
     """
-    Example process that summarizes content items that haven't been summarized yet.
+    Process items that need summarization from DynamoDB, generate summaries,
+    and update the metadata.
     """
     # Load environment variables
     load_dotenv()
@@ -35,84 +81,45 @@ def run_summarization_process():
     )
     aws_region = os.getenv("AWS_REGION", "us-east-1")
 
-    # Initialize AWS storage
-    aws_storage = AwsStorage(
-        s3_bucket_name=s3_bucket_name,
-        dynamodb_table_name=dynamodb_table_name,
-        aws_region=aws_region,
+    # Initialize services
+    state_manager = DynamoDBState(
+        dynamodb_table_name=dynamodb_table_name, aws_region=aws_region
+    )
+    s3_storage = S3Storage(s3_bucket_name=s3_bucket_name, aws_region=aws_region)
+    summarizer = Summarizer()
+
+    # Check if resources exist
+    s3_exists = check_resources(s3_storage)
+    dynamo_exists = check_resources(state_manager)
+
+    if not (s3_exists and dynamo_exists):
+        logger.error(
+            "Required AWS resources do not exist. Please ensure your S3 bucket and DynamoDB table are created."
+        )
+        sys.exit(1)
+
+    # Get items that need summarization (processed, worth summarizing, not summarized yet)
+    items_to_summarize = state_manager.get_items_needing_summarization(
+        limit=10, as_content_items=True
     )
 
-    # Check if AWS resources exist
-    if not aws_storage.check_resources_exist():
-        logger.error(
-            "Required AWS resources do not exist. Please check your configuration."
-        )
+    if not items_to_summarize:
+        logger.info("No items found that need summarization.")
         return
 
-    # Method 1: Get all items that need summarization (status = 'fetched')
-    items_to_summarize = aws_storage.get_items_needing_processing(
-        target_status="fetched", limit=10
-    )
-
-    logger.info(f"Found {len(items_to_summarize)} items that need summarization")
+    logger.info(f"Found {len(items_to_summarize)} items that need summarization.")
 
     # Process each item
-    summarized_count = 0
     for item in items_to_summarize:
-        guid = item.get("guid")
-        s3_path = item.get("s3_path")
+        updated_item = summarize_content(item, s3_storage, summarizer)
 
-        # Double-check the item still needs processing (to handle concurrent processing)
-        if not aws_storage.needs_summarization(guid):
-            logger.info(
-                f"Item {guid} was already summarized by another process, skipping"
-            )
-            continue
-
-        # Get the content from S3
-        content = aws_storage.get_content_from_s3(s3_path)
-        if not content:
-            logger.error(f"Could not retrieve content for item {guid}, skipping")
-            continue
-
-        # Generate summary
-        summary = summarize_content(content)
-
-        # Store the summary and update status
-        summary_path = aws_storage.store_processed_summary(guid, summary)
-        if summary_path:
-            summarized_count += 1
-
-    logger.info(f"Successfully summarized {summarized_count} items")
-
-    # Method 2: Alternative approach - process a list of specific GUIDs
-    guids_to_process = ["example-guid-1", "example-guid-2", "example-guid-3"]
-
-    for guid in guids_to_process:
-        # Check if the item exists and needs summarization
-        if not aws_storage.needs_summarization(guid):
-            logger.info(
-                f"Item {guid} doesn't exist or doesn't need summarization, skipping"
-            )
-            continue
-
-        # Get the metadata
-        metadata = aws_storage.get_item_metadata(guid)
-        if not metadata:
-            logger.error(f"Could not retrieve metadata for item {guid}, skipping")
-            continue
-
-        # Get the content
-        s3_path = metadata.get("s3_path")
-        content = aws_storage.get_content_from_s3(s3_path)
-        if not content:
-            logger.error(f"Could not retrieve content for item {guid}, skipping")
-            continue
-
-        # Generate and store the summary
-        summary = summarize_content(content)
-        aws_storage.store_processed_summary(guid, summary)
+        if updated_item:
+            # Update item in DynamoDB
+            state_manager.update_item(updated_item)
+            logger.info(f"Updated metadata for item {updated_item.guid}")
 
 
 if __name__ == "__main__":
+    logger.info("Starting summarization process...")
     run_summarization_process()
+    logger.info("Summarization process completed.")

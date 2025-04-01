@@ -1,10 +1,12 @@
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 
 import feedparser
 
 from src.content_curator.fetchers.fetcher_base import Fetcher
 from src.content_curator.fetchers.fetcher_utils import get_urls_for_fetch
+from src.content_curator.models import ContentItem
+from src.content_curator.storage.s3_storage import S3Storage
 from src.content_curator.utils import generate_guid_for_rss_entry
 
 
@@ -16,6 +18,7 @@ class RssFetcher(Fetcher):
         url_file_path: Optional[str] = None,
         max_items: Optional[int] = None,
         specific_url: Optional[str] = None,
+        s3_storage: Optional[S3Storage] = None,
     ):
         """
         Initializes the RSS Fetcher.
@@ -24,6 +27,7 @@ class RssFetcher(Fetcher):
             url_file_path: Path to the text file containing RSS feed URLs (one per line).
             max_items: Maximum number of most recent items to fetch per feed. If None, fetch all items.
             specific_url: Optional specific URL to fetch, overrides url_file_path if provided.
+            s3_storage: Optional S3Storage instance for storing HTML content.
         """
         source_identifier = (
             specific_url if specific_url else url_file_path or "direct_url"
@@ -32,6 +36,7 @@ class RssFetcher(Fetcher):
         self.url_file_path = url_file_path
         self.specific_url = specific_url
         self.max_items = max_items
+        self.s3_storage = s3_storage
 
     def _read_urls_from_file(self) -> List[str]:
         """Gets URLs either from file or from specific_url parameter."""
@@ -65,12 +70,16 @@ class RssFetcher(Fetcher):
         )
         return None
 
-    def fetch_items(self) -> List[Dict[str, Any]]:
+    def fetch_items(self) -> List[ContentItem]:
         """
         Fetches items from all RSS feeds listed in the file or from specific_url.
+        If s3_storage is provided, stores the HTML content in S3.
+
+        Returns:
+            List of ContentItem objects representing fetched content
         """
         feed_urls = self._read_urls_from_file()
-        all_items = []
+        all_items: List[ContentItem] = []
 
         if not feed_urls:
             self.logger.warning("No feed URLs loaded, fetch aborted.")
@@ -127,29 +136,35 @@ class RssFetcher(Fetcher):
                     html_content = self._extract_html_content(entry)
 
                     # Metadata for the item
-                    fetch_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    fetch_date = datetime.now().isoformat()
 
-                    # TODO: create a unique title: snakecase {feed_name}_{title}
+                    # Define HTML path
+                    html_path = f"html/{guid}.html"
 
-                    item = {
-                        "guid": guid,  # Unique identifier for the item
-                        "title": title,
-                        "link": link,
-                        "published_date": published_date,  # Can be None
-                        "fetch_date": fetch_date,
-                        "source_url": url,  # The URL of the feed itself
-                        "html_content": html_content,
-                    }
+                    # Store HTML content in S3 if storage is available
+                    if html_content and self.s3_storage:
+                        self.s3_storage.store_content(
+                            html_path, html_content, content_type="text/html"
+                        )
+                        self.logger.info(f"Stored HTML content at: {html_path}")
+
+                    # Create a ContentItem
+                    item = ContentItem(
+                        guid=guid,
+                        link=link or "",  # Ensure link is never None
+                        title=title,
+                        published_date=published_date,
+                        fetch_date=fetch_date,
+                        source_url=url,
+                        html_content=html_content,
+                        is_fetched=True,
+                        html_path=html_path,
+                    )
+
                     all_items.append(item)
 
                     self.logger.info(
-                        f"Created new item metadata: '{item.get('title', '')}' ({guid})"
-                    )
-
-                    # Store HTML content reference
-                    html_key = f"html/{guid}.html"
-                    self.logger.debug(
-                        f"Stored HTML content for '{item.get('title', '')}' ({guid}) at: {html_key}"
+                        f"Created new content item: '{item.title}' ({item.guid})"
                     )
 
             except Exception as e:
@@ -172,3 +187,8 @@ if __name__ == "__main__":
 
     fetcher = RssFetcher(specific_url="https://www.lesswrong.com/feed.xml")
     items = fetcher.fetch_items()
+
+    # Print example of content item
+    if items:
+        print(f"Example item: {items[0].title}")
+        print(f"Has HTML content: {'Yes' if items[0].html_content else 'No'}")

@@ -64,9 +64,9 @@ def fix_summary_metadata(dry_run=False, evaluate_content=False):
     # Setup processor for content evaluation if needed
     processor = MarkdownProcessor() if evaluate_content else None
 
-    # Get all processed items from DynamoDB
+    # Get all processed items from DynamoDB as ContentItem objects
     processed_items = state_manager.get_items_by_status_flags(
-        is_processed=True, limit=1000
+        is_processed=True, limit=1000, as_content_items=True
     )
     logger.info(f"Found {len(processed_items)} processed items to check")
 
@@ -79,17 +79,16 @@ def fix_summary_metadata(dry_run=False, evaluate_content=False):
     content_evaluated_count = 0
 
     for item in processed_items:
-        guid = item.get("guid")
+        guid = item.guid
         if not guid:
             logger.warning("Found item without guid, skipping")
             continue
 
-        # Check if item is already marked as summarized
-        is_summarized = item.get("is_summarized", False)
-        to_be_summarized = item.get("to_be_summarized")
+        # Check current item status
+        is_summarized = item.is_summarized
+        to_be_summarized = item.to_be_summarized
 
-        # Set up updates dictionary
-        updates = {}
+        # Track if item needs update
         needs_update = False
 
         # Construct expected S3 paths - CORRECT paths with slashes
@@ -103,20 +102,20 @@ def fix_summary_metadata(dry_run=False, evaluate_content=False):
         # If summaries exist but metadata doesn't reflect it, mark for update
         if standard_exists and not is_summarized:
             logger.info(f"Item {guid}: Found summary in S3 but not marked in metadata")
-            updates["is_summarized"] = True
-            updates["summary_path"] = standard_summary_path
+            item.is_summarized = True
+            item.summary_path = standard_summary_path
             needs_update = True
 
             if short_exists:
-                updates["short_summary_path"] = short_summary_path
+                item.short_summary_path = short_summary_path
                 logger.info(f"Item {guid}: Also found short summary in S3")
 
         # If evaluating content quality
         if evaluate_content and to_be_summarized is None:
             # Get the markdown content from S3
-            s3_path = item.get("s3_path")
-            if s3_path:
-                markdown_content = s3_storage.get_content(s3_path)
+            md_path = item.md_path
+            if md_path:
+                markdown_content = s3_storage.get_content(md_path)
                 if markdown_content:
                     # Evaluate if the content is worth summarizing
                     is_paywall = processor.is_paywall_or_teaser(markdown_content)
@@ -128,9 +127,9 @@ def fix_summary_metadata(dry_run=False, evaluate_content=False):
                         )
                     )
 
-                    # Add to updates
-                    updates["is_paywall"] = is_paywall
-                    updates["to_be_summarized"] = worth_summarizing
+                    # Update the ContentItem
+                    item.is_paywall = is_paywall
+                    item.to_be_summarized = worth_summarizing
                     needs_update = True
                     content_evaluated_count += 1
 
@@ -141,15 +140,15 @@ def fix_summary_metadata(dry_run=False, evaluate_content=False):
                     else:
                         logger.info(f"Item {guid}: Content is NOT worth summarizing")
 
-        # Update metadata if needed
+        # Update item if needed
         if needs_update:
-            updates["last_updated"] = datetime.now().isoformat()
+            item.last_updated = datetime.now().isoformat()
 
             if not dry_run:
-                state_manager.update_metadata(guid=guid, updates=updates)
-                logger.info(f"Updated item {guid} with metadata: {updates}")
+                state_manager.update_item(item)
+                logger.info(f"Updated item {guid} in DynamoDB")
             else:
-                logger.info(f"[DRY RUN] Would update item {guid} with: {updates}")
+                logger.info(f"[DRY RUN] Would update item {guid} in DynamoDB")
 
             updated_count += 1
 

@@ -129,15 +129,15 @@ with tab_items:
     # Define desired columns and order (handle missing columns gracefully)
     display_columns_ordered = [
         "guid",
-        "title",
-        "source_url",
         "published_date",
+        "title",
+        "md_path",
+        "source_url",
         "fetch_date",
         "is_fetched",
         "is_processed",
         "is_summarized",
         "is_distributed",
-        "s3_path",
         "summary_path",
         "last_updated",
     ]
@@ -192,7 +192,7 @@ with tab_items:
         col1, col2 = st.columns(2)  # Create two columns for content
 
         # Fetch and display Markdown content from S3
-        markdown_s3_path = selected_item.get("s3_path")
+        markdown_s3_path = selected_item.get("md_path")
         with col1:
             # HEADING: Markdown
             st.subheader("Processed Markdown")
@@ -225,7 +225,7 @@ with tab_items:
                         st.error(f"Error fetching content ({markdown_s3_path}): {e}")
             else:
                 st.info(
-                    "No processed markdown S3 path ('s3_path') found for this item."
+                    "No processed markdown S3 path ('md_path') found for this item."
                 )
 
             # HEADING: JSON details

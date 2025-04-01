@@ -1,9 +1,11 @@
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 from langchain_community.document_transformers import MarkdownifyTransformer
 from langchain_core.documents import Document
 from loguru import logger
+
+from src.content_curator.models import ContentItem
 
 
 class MarkdownProcessor:
@@ -50,21 +52,21 @@ class MarkdownProcessor:
             # Optionally return a placeholder or the original HTML if preferred
             return "[Content Conversion Failed]"
 
-    def format_content(self, item: Dict[str, Any], markdown_content: str) -> str:
+    def format_content(self, item: ContentItem, markdown_content: str) -> str:
         """
         Format the content with metadata header.
 
         Args:
-            item: The content item dictionary with metadata
+            item: The ContentItem with metadata
             markdown_content: The processed markdown content
 
         Returns:
             Formatted content with headers
         """
-        title = item.get("title", "No Title")
-        link = item.get("link", "No Link")
-        fetch_date = item.get("fetch_date", "Unknown")
-        published_date = item.get("published_date", "Unknown")
+        title = item.title or "No Title"
+        link = item.link or "No Link"
+        fetch_date = item.fetch_date or "Unknown"
+        published_date = item.published_date or "Unknown"
 
         header = f"Date Updated: {fetch_date}\nDate Published: {published_date}\n\nTitle: {title}\n\nURL Source: {link}\n\nMarkdown Content:\n"
         return header + markdown_content
@@ -282,21 +284,21 @@ class MarkdownProcessor:
 
         return True
 
-    def process_content(self, items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def process_content(self, items: List[ContentItem]) -> List[ContentItem]:
         """
         Process a list of content items - converting HTML to markdown and formatting the output.
         Also determines if content is behind a paywall and if it's worth summarizing.
 
         Args:
-            items: List of content items with html_content
+            items: List of ContentItem objects with html_content
 
         Returns:
-            List of processed items with markdown_content added
+            List of processed ContentItem objects with markdown_content added
         """
         processed_items = []
 
         for item in items:
-            html_content = item.get("html_content")
+            html_content = item.html_content
 
             # Convert HTML to Markdown
             markdown_content = (
@@ -308,13 +310,12 @@ class MarkdownProcessor:
             # Format with header
             formatted_content = self.format_content(item, markdown_content)
 
-            # Create a new item with all original data plus the markdown content
-            processed_item = item.copy()
-            processed_item["markdown_content"] = formatted_content
+            # Update the item with markdown content and processing results
+            item.markdown_content = formatted_content
 
             # Check if content is paywalled/teaser
             is_paywall = self.is_paywall_or_teaser(formatted_content)
-            processed_item["is_paywall"] = is_paywall
+            item.is_paywall = is_paywall
 
             # Check if content is worth summarizing
             to_be_summarized = (
@@ -325,22 +326,37 @@ class MarkdownProcessor:
                     min_failures_to_reject=3,  # Require at least 3 failures to reject
                 )
             )
-            processed_item["to_be_summarized"] = to_be_summarized
+            item.to_be_summarized = to_be_summarized
+
+            # Mark as processed
+            item.is_processed = True
+
+            # Set the md_path for markdown content
+            item.md_path = f"markdown/{item.guid}.md"
 
             if is_paywall:
-                self.logger.info(
-                    f"Item {item.get('guid', 'unknown')} detected as paywall/teaser"
-                )
+                self.logger.info(f"Item {item.guid} detected as paywall/teaser")
             if to_be_summarized:
-                self.logger.info(
-                    f"Item {item.get('guid', 'unknown')} marked for summarization"
-                )
+                self.logger.info(f"Item {item.guid} marked for summarization")
             else:
-                self.logger.info(
-                    f"Item {item.get('guid', 'unknown')} will not be summarized"
-                )
+                self.logger.info(f"Item {item.guid} will not be summarized")
 
-            processed_items.append(processed_item)
+            processed_items.append(item)
 
         self.logger.info(f"Processed {len(processed_items)} content items")
         return processed_items
+
+    # Add a method for processing a single item
+    def process_item(self, item: ContentItem) -> ContentItem:
+        """
+        Process a single content item - converting HTML to markdown and formatting the output.
+        Also determines if content is behind a paywall and if it's worth summarizing.
+
+        Args:
+            item: ContentItem object with html_content
+
+        Returns:
+            Processed ContentItem with markdown_content added
+        """
+        # Simply reuse the list processing logic
+        return self.process_content([item])[0]

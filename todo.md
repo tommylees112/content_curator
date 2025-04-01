@@ -1,6 +1,37 @@
 # TODO
+# Content Curator Improvements
 
-1. **Refactor Item Loading Logic**: There's significant overlap in the logic at the beginning of run_process_stage and run_summarize_stage for determining which items to work on based on specific_id, overwrite_flag, and whether items were passed from a previous stage. This logic could be extracted into a reusable helper function (or potentially integrated into the DynamoDBState class) to reduce duplication and improve clarity. For example, a function like get_items_for_stage(stage_name, specific_id, overwrite, previous_stage_items) could encapsulate this.
+## Completed
+- [x] Added `ContentItem` dataclass in `src/content_curator/models.py` to represent content items throughout the pipeline
+- [x] Updated `DynamoDBState` to use ContentItem with new `store_item`, `get_item`, and `update_item` methods
+- [x] Updated `RssFetcher` to return ContentItem objects
+- [x] Updated `MarkdownProcessor` to work with ContentItem objects
+- [x] Updated `Summarizer` to work with ContentItem objects
+- [x] Updated `NewsletterCurator` to work with ContentItem objects
+- [x] Updated `main.py` to use ContentItem throughout the pipeline stages
+- [x] Updated scripts to use ContentItem objects (`update_guids.py`, `fix_summary_metadata.py`)
+- [x] Updated examples to use ContentItem objects (`summarization_process.py`)
+- [x] Added `get_items_needing_summarization` method to DynamoDBState to get items that need summarization
+
+## TODO
+- [ ] ensure that the fetcher stores the html that is collected in the s3 storage.create a new html_path field in the ContentItem dataclass and column in the dynamodb table. Also rename / update the s3_path to be md_path.
+- [x] Clean up original dictionary-based methods after fully validating the ContentItem implementation
+- [ ] Add comprehensive unit tests for the ContentItem implementation
+- [ ] Add docstrings explaining the purpose and lifecycle of ContentItem fields
+- [ ] Consider refactoring the pipeline to make each stage more independent:
+  - [ ] Extract the `get_items_for_stage()` helper function to centralize item loading logic
+  - [ ] Move more stage logic from `main.py` to the respective classes
+- [ ] Make configuration more centralized, moving hardcoded values into a config file
+- [ ] Prepare for potential serverless architecture:
+  - [ ] Create a `functions/` directory with handlers for each pipeline stage
+  - [ ] Implement serverless function entry points for each stage
+  - [ ] Set up infrastructure as code (e.g., AWS SAM or Serverless Framework config)
+- [ ] Improve error handling with specific exception types and retry logic
+
+## Architecture Notes
+- Each stage of the pipeline uses the same ContentItem dataclass, with different fields populated at each stage
+- Storage classes (`DynamoDBState`, `S3Storage`) handle serialization/deserialization between ContentItem objects and database/object storage
+- Each pipeline component should focus on its core responsibility, with minimal knowledge of other components' implementation details
 
 2. **Introduce Data Classes or Pydantic Models**: The pipeline passes around lists of dictionaries (List[Dict]). While flexible, this makes it hard to know the expected structure of an 'item' and can lead to errors (e.g., typos in keys). Using Python's dataclasses or a library like Pydantic to define a clear Item model would improve type hinting, code readability, auto-completion, and overall robustness. You'd know exactly what fields (guid, title, link, s3_path, is_processed, etc.) an item should have at different stages.
 

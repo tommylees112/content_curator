@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional
+from typing import Dict, List, Literal, Optional
 
 from dotenv import load_dotenv
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -8,6 +8,8 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_openai import ChatOpenAI
 from loguru import logger
+
+from src.content_curator.models import ContentItem
 
 # Define prompt types
 SummaryType = Literal["standard", "brief"]
@@ -165,77 +167,90 @@ class Summarizer:
             self.logger.exception(f"Failed to generate '{summary_type}' summary: {e}")
             return None
 
-    def batch_summarize(
-        self, items: List[Dict[str, Any]], summary_type: SummaryType = "standard"
-    ) -> List[Dict[str, Any]]:
+    def summarize_item(
+        self, item: ContentItem, summary_type: SummaryType = "standard"
+    ) -> ContentItem:
         """
-        Generate summaries for a batch of items using the specified summary type.
+        Generate a summary for a ContentItem.
 
         Args:
-            items: List of content items with markdown_content
+            item: The ContentItem with markdown_content to summarize
             summary_type: The type of summary to generate ("standard" or "brief")
 
         Returns:
-            List of items with added 'summary' if standard or 'short_summary' if brief
+            The ContentItem with summary added
         """
-        results = []
-        summary_field = "summary" if summary_type == "standard" else "short_summary"
+        if not item.markdown_content:
+            self.logger.warning(
+                f"No markdown content to summarize for item '{item.guid}'"
+            )
+            return item
 
+        # Generate the summary
+        summary = self.summarize_text(item.markdown_content, summary_type=summary_type)
+
+        # Add summary to the item based on type
+        if summary:
+            if summary_type == "standard":
+                item.summary = summary
+                item.summary_path = f"processed/summaries/{item.guid}.md"
+                self.logger.info(
+                    f"Generated standard summary for item '{item.title}' ({item.guid})"
+                )
+            else:  # "brief"
+                item.short_summary = summary
+                item.short_summary_path = f"processed/short_summaries/{item.guid}.md"
+                self.logger.info(
+                    f"Generated brief summary for item '{item.title}' ({item.guid})"
+                )
+
+            # If this is a standard summary, mark the item as summarized
+            if summary_type == "standard":
+                item.is_summarized = True
+
+        return item
+
+    def batch_summarize(
+        self, items: List[ContentItem], summary_type: SummaryType = "standard"
+    ) -> List[ContentItem]:
+        """
+        Generate summaries for a batch of ContentItems.
+
+        Args:
+            items: List of ContentItems with markdown_content
+            summary_type: The type of summary to generate ("standard" or "brief")
+
+        Returns:
+            The same list of ContentItems with summaries added
+        """
         self.logger.info(
             f"Batch summarizing {len(items)} items with '{summary_type}' summary type"
         )
 
         for item in items:
-            content = item.get("markdown_content", "")
-            if not content:
-                self.logger.warning(
-                    f"Skipping item '{item.get('title', 'N/A')}' ({item.get('guid', 'N/A')}) due to missing markdown content."
-                )
-                # Don't modify the item if no content
-                results.append(item.copy())
-                continue
+            self.summarize_item(item, summary_type=summary_type)
 
-            # Generate the requested summary type
-            summary = self.summarize_text(content, summary_type=summary_type)
+        self.logger.info(f"Generated {summary_type} summaries for {len(items)} items")
+        return items
 
-            # Add to results, preserving existing data
-            item_with_summary = item.copy()
-            item_with_summary[summary_field] = summary
-            results.append(item_with_summary)
-
-            if summary:
-                self.logger.info(
-                    f"Generated '{summary_type}' summary for '{item.get('title', 'N/A')}' ({item.get('guid', 'N/A')})"
-                )
-
-        self.logger.info(f"Generated {summary_type} summaries for {len(results)} items")
-        return results
-
-    def batch_summarize_all(self, items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def batch_summarize_all(self, items: List[ContentItem]) -> List[ContentItem]:
         """
-        Generate both standard and brief summaries for a batch of items.
-
-        This is a convenience method that calls batch_summarize twice,
-        once for each summary type.
+        Generate both standard and brief summaries for a batch of ContentItems.
 
         Args:
-            items: List of content items with markdown_content
+            items: List of ContentItems with markdown_content
 
         Returns:
-            List of items with added 'summary' and 'short_summary'
+            The same list of ContentItems with both summaries added
         """
-        # First, generate standard summaries
-        items_with_standard = self.batch_summarize(items, summary_type="standard")
+        # Generate standard summaries
+        self.batch_summarize(items, summary_type="standard")
 
-        # Then, generate brief summaries and merge them
-        items_with_both = self.batch_summarize(
-            items_with_standard, summary_type="brief"
-        )
+        # Generate brief summaries
+        self.batch_summarize(items, summary_type="brief")
 
-        self.logger.info(
-            f"Generated both summary types for {len(items_with_both)} items"
-        )
-        return items_with_both
+        self.logger.info(f"Generated both summary types for {len(items)} items")
+        return items
 
 
 if __name__ == "__main__":

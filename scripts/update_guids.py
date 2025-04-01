@@ -8,6 +8,7 @@ from loguru import logger
 
 sys.path.append(str(Path(__file__).parent.parent))
 
+from src.content_curator.models import ContentItem
 from src.content_curator.storage.dynamodb_state import DynamoDBState
 from src.content_curator.utils import generate_url_hash
 
@@ -34,8 +35,8 @@ def update_guids(dry_run: bool = True, batch_size: int = 25):
         dynamodb_table_name=dynamodb_table_name, aws_region=aws_region
     )
 
-    # Get all items from the table
-    all_items = state_manager.get_all_items()
+    # Get all items from the table as ContentItem objects
+    all_items = state_manager.get_all_items(as_content_items=True)
 
     if not all_items:
         logger.warning("No items found in the table.")
@@ -55,8 +56,8 @@ def update_guids(dry_run: bool = True, batch_size: int = 25):
 
     # First pass: check what needs to be updated and verify no collisions
     for item in all_items:
-        old_guid = item.get("guid")
-        link = item.get("link")
+        old_guid = item.guid
+        link = item.link
 
         if not link:
             logger.warning(f"Item {old_guid} has no link field, skipping")
@@ -113,15 +114,39 @@ DRY RUN Summary:
         )
 
         for item, new_guid in batch:
-            old_guid = item.get("guid")
+            old_guid = item.guid
             try:
-                # Create new item with updated GUID
-                new_item = item.copy()
-                new_item["guid"] = new_guid
-                new_item["last_updated"] = datetime.now().isoformat()
+                # Create new ContentItem with updated GUID
+                # Convert to dict and back to make a deep copy
+                item_dict = item.to_dict()
+
+                # Create new ContentItem with new GUID
+                new_item = ContentItem(
+                    guid=new_guid,
+                    link=item.link,
+                    # Copy all other attributes from original item
+                    title=item.title,
+                    published_date=item.published_date,
+                    fetch_date=item.fetch_date,
+                    source_url=item.source_url,
+                    is_fetched=item.is_fetched,
+                    is_processed=item.is_processed,
+                    is_summarized=item.is_summarized,
+                    is_distributed=item.is_distributed,
+                    is_paywall=item.is_paywall,
+                    to_be_summarized=item.to_be_summarized,
+                    html_path=item.html_path,
+                    md_path=item.md_path,
+                    summary_path=item.summary_path,
+                    short_summary_path=item.short_summary_path,
+                    newsletters=item.newsletters,
+                )
+
+                # Update timestamp
+                new_item.last_updated = datetime.now().isoformat()
 
                 # Store new item
-                if state_manager.store_metadata(new_item):
+                if state_manager.store_item(new_item):
                     # Only delete old item if new one was stored successfully
                     if state_manager.delete_item(old_guid):
                         updates_made += 1

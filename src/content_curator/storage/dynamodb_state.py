@@ -1,9 +1,11 @@
 from datetime import datetime
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Union
 
 import boto3
 from botocore.exceptions import ClientError
 from loguru import logger
+
+from src.content_curator.models import ContentItem
 
 
 class DynamoDBState:
@@ -46,6 +48,27 @@ class DynamoDBState:
             )
             return False
 
+    def store_item(self, item: ContentItem) -> bool:
+        """
+        Store ContentItem in DynamoDB.
+
+        Args:
+            item: The ContentItem to store
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            # Convert ContentItem to dictionary for DynamoDB
+            item_dict = item.to_dict()
+
+            self.table.put_item(Item=item_dict)
+            self.logger.info(f"Stored item with GUID: {item.guid}")
+            return True
+        except Exception as e:
+            self.logger.error(f"Error storing item: {e}")
+            return False
+
     def store_metadata(self, metadata: Dict[str, Any]) -> bool:
         """
         Store metadata in DynamoDB.
@@ -65,6 +88,29 @@ class DynamoDBState:
         except Exception as e:
             self.logger.error(f"Error storing metadata: {e}")
             return False
+
+    def get_item(self, guid: str) -> Optional[ContentItem]:
+        """
+        Retrieve ContentItem from DynamoDB.
+
+        Args:
+            guid: The unique identifier of the item
+
+        Returns:
+            ContentItem or None if not found
+        """
+        try:
+            response = self.table.get_item(Key={"guid": guid})
+            item_dict = response.get("Item")
+
+            if not item_dict:
+                return None
+
+            # Convert dictionary to ContentItem
+            return ContentItem.from_dict(item_dict)
+        except Exception as e:
+            self.logger.error(f"Error retrieving item {guid}: {e}")
+            return None
 
     def get_metadata(self, guid: str) -> Optional[Dict[str, Any]]:
         """
@@ -185,7 +231,8 @@ class DynamoDBState:
         is_summarized: bool = None,
         is_distributed: bool = None,
         limit: int = 100,
-    ) -> List[Dict[str, Any]]:
+        as_content_items: bool = True,  # Changed default to True
+    ) -> Union[List[Dict[str, Any]], List[ContentItem]]:
         """
         Get items based on their processing status flags.
 
@@ -195,9 +242,11 @@ class DynamoDBState:
             is_summarized: Filter for summarized status
             is_distributed: Filter for distributed status
             limit: Maximum number of items to return
+            as_content_items: If True, return as ContentItem objects instead of dictionaries
+                             (Default is now True to encourage use of ContentItem objects)
 
         Returns:
-            List of matching items
+            List of matching items as ContentItem objects (or dictionaries if as_content_items=False)
         """
         try:
             # Build the filter expression based on provided flags
@@ -248,6 +297,11 @@ class DynamoDBState:
                 response = self.table.scan(Limit=limit)
 
             items = response.get("Items", [])
+
+            # Convert to ContentItem objects if requested
+            if as_content_items and items:
+                return [ContentItem.from_dict(item) for item in items]
+
             return items
 
         except Exception as e:
@@ -264,6 +318,9 @@ class DynamoDBState:
 
         Returns:
             True if successful, False otherwise
+
+        Note:
+            This method is used internally by update_item.
         """
         try:
             # Build the update expression and attribute values
@@ -318,12 +375,18 @@ class DynamoDBState:
             self.logger.error(f"Error deleting item {guid}: {e}")
             return False
 
-    def get_all_items(self) -> List[Dict[str, Any]]:
+    def get_all_items(
+        self, as_content_items: bool = True
+    ) -> Union[List[Dict[str, Any]], List[ContentItem]]:
         """
         Get all items from the DynamoDB table.
 
+        Args:
+            as_content_items: If True, return results as ContentItem objects instead of dictionaries
+                             (Default is now True to encourage use of ContentItem objects)
+
         Returns:
-            List of all items in the table
+            List of all items in the table as ContentItem objects (or dictionaries if as_content_items=False)
         """
         try:
             items = []
@@ -340,7 +403,92 @@ class DynamoDBState:
                 done = start_key is None
 
             self.logger.info(f"Retrieved {len(items)} items from DynamoDB")
+
+            # Convert to ContentItem objects if requested
+            if as_content_items and items:
+                return [ContentItem.from_dict(item) for item in items]
+
             return items
         except Exception as e:
             self.logger.error(f"Error retrieving all items: {e}")
             return []
+
+    def get_items_needing_summarization(
+        self, limit: int = 10, as_content_items: bool = True
+    ) -> Union[List[Dict[str, Any]], List[ContentItem]]:
+        """
+        Get items that need summarization (processed, worth summarizing, not summarized yet).
+
+        Args:
+            limit: Maximum number of items to return
+            as_content_items: If True, return results as ContentItem objects
+
+        Returns:
+            List of items that need summarization
+        """
+        try:
+            # Build filter expression for:
+            # 1. Items that are processed
+            # 2. Items that are not summarized
+            # 3. Items that are worth summarizing (to_be_summarized = True)
+            filter_expression = boto3.dynamodb.conditions.Attr("is_processed").eq(True)
+            filter_expression = filter_expression & boto3.dynamodb.conditions.Attr(
+                "is_summarized"
+            ).eq(False)
+
+            # Only include items explicitly marked as worth summarizing
+            # or items that haven't been evaluated yet (to_be_summarized is null)
+            worth_summarizing_condition = boto3.dynamodb.conditions.Attr(
+                "to_be_summarized"
+            ).eq(True)
+            not_evaluated_condition = boto3.dynamodb.conditions.Attr(
+                "to_be_summarized"
+            ).not_exists()
+            worth_condition = worth_summarizing_condition | not_evaluated_condition
+
+            filter_expression = filter_expression & worth_condition
+
+            # Execute scan with the filter
+            response = self.table.scan(
+                FilterExpression=filter_expression,
+                Limit=limit,
+            )
+
+            items = response.get("Items", [])
+            self.logger.info(f"Found {len(items)} items that need summarization")
+
+            # Convert to ContentItem objects if requested
+            if as_content_items and items:
+                return [ContentItem.from_dict(item) for item in items]
+
+            return items
+
+        except Exception as e:
+            self.logger.error(f"Error getting items needing summarization: {e}")
+            return []
+
+    def update_item(self, item: ContentItem) -> bool:
+        """
+        Update an item in DynamoDB with the current state of a ContentItem.
+
+        Args:
+            item: The ContentItem to update
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            # Always update the last_updated timestamp
+            item.last_updated = datetime.now().isoformat()
+
+            # Convert ContentItem to dictionary for DynamoDB
+            item_dict = item.to_dict()
+
+            # Remove the guid from the updates as it's the key
+            guid = item_dict.pop("guid")
+
+            # Update the item using the existing update_metadata method
+            return self.update_metadata(guid, item_dict)
+        except Exception as e:
+            self.logger.error(f"Error updating item {item.guid}: {e}")
+            return False
