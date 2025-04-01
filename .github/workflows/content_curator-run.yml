@@ -1,0 +1,45 @@
+name: Daily Content Curation
+
+on:
+  push:
+  schedule:
+    - cron: '0 9 * * *'  # Every day at 9am UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  content-curation:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repo
+      uses: actions/checkout@v3
+      with:
+        persist-credentials: false
+        fetch-depth: 0
+
+    - name: Install uv
+      run: |
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+    - name: Install dependencies
+      run: uv sync
+
+    - name: Run fetch stage
+      run: |
+        mkdir -p logs
+        uv run python scripts/main.py --fetch
+
+    - name: Run process stage
+      run: uv run python scripts/main.py --process
+
+    - name: Run summarize stage
+      run: uv run python scripts/main.py --summarize
+
+    - name: Run curate stage
+      run: uv run python scripts/main.py --curate
+

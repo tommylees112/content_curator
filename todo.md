@@ -24,6 +24,20 @@
 - [x] Create a distributor class that will take in a list of content items and distribute them to the appropriate channels. how to do this in an extensible way (slack, email, whatsapp, html, etc.).
 
 ## TODO
+- [ ] from the AWSURLDistributor create a view into the LONGER summaries of the curated content so the user can click through and see the full summaries.
+- [ ]
+what do i need to do in order to deploy this and have it run daily on github actions? 
+
+I want to use uv to install the dependencies
+
+I want to run the different parts of the pipeline separately
+
+1. fetch
+2. process
+3. summarize
+4. curate
+5. distribute
+
 - [ ] Add comprehensive unit tests for the ContentItem implementation
 - [ ] Add docstrings explaining the purpose and lifecycle of ContentItem fields
 - [ ] Prepare for potential serverless architecture:

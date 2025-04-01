@@ -1,13 +1,12 @@
 # --- rss_urls.txt ---
 # Example RSS Feeds (replace with actual valid URLs)
-# http://astralcodexten.substack.com/feed
-# https://thezvi.substack.com/feed
-# https://www.latent.space/feed
-# https://newsletter.maartengrootendorst.com/feed
-# https://magazine.sebastianraschka.com/feed
-# https://newsletter.languagemodels.co/feed
-# https://www.lesswrong.com/feed.xml
-# https://www.lesswrong.com/feed.xml?view=curated-rss
+http://astralcodexten.substack.com/feed
+https://thezvi.substack.com/feed
+https://www.latent.space/feed
+https://newsletter.maartengrootendorst.com/feed
+https://magazine.sebastianraschka.com/feed
+https://newsletter.languagemodels.co/feed
+https://www.lesswrong.com/feed.xml?view=curated-rss
 https://www.lesswrong.com/feed.xml?view=community-rss&karmaThreshold=75
 https://www.dwarkesh.com/feed
 

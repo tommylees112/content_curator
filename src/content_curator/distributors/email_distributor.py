@@ -6,6 +6,7 @@ from typing import List, Optional
 from loguru import logger
 
 from src.content_curator.config import config
+from src.content_curator.distributors.aws_url_distributor import AWSURLDistributor
 from src.content_curator.distributors.html_converter import (
     HTMLConverter,
     convert_markdown_to_html,
@@ -78,6 +79,9 @@ class EmailDistributor:
         # Initialize the HTML converter
         self.html_converter = HTMLConverter(s3_storage, bucket_name, region_name)
 
+        # Initialize the AWS URL distributor
+        self.url_distributor = AWSURLDistributor(s3_storage, bucket_name, region_name)
+
         logger.info(f"Initialized EmailDistributor for bucket: {self.bucket_name}")
 
     def _mask_string(self, value: str) -> str:
@@ -139,6 +143,19 @@ class EmailDistributor:
 
             # Convert the markdown to HTML
             html_content = convert_markdown_to_html(markdown_content)
+
+            # Generate browser view URL with HTML version instead of markdown
+            browser_url = self.url_distributor.distribute_as_html(s3_key)
+            if browser_url:
+                browser_link = f'<div style="margin-bottom: 20px; padding: 10px; background-color: #f0f0f0; border-radius: 5px;"><a href="{browser_url}">Follow link to view in browser</a></div>'
+                # Insert the browser link at the beginning of the HTML body
+                if "<body>" in html_content:
+                    html_content = html_content.replace(
+                        "<body>", f"<body>\n{browser_link}"
+                    )
+                else:
+                    html_content = f"{browser_link}\n{html_content}"
+                logger.info("Added HTML browser view link to email content")
 
             # Create email subject
             subject_prefix = subject_prefix or config.email_subject_prefix
@@ -214,6 +231,16 @@ class EmailDistributor:
                 logger.error("No content was retrieved to send via email.")
                 return False
 
+            # Generate browser view URL for the first item (as a representative)
+            browser_url = None
+            if s3_keys:
+                browser_url = self.url_distributor.distribute_as_html(s3_keys[0])
+
+            browser_link = ""
+            if browser_url:
+                browser_link = f'<div style="margin-bottom: 20px; padding: 10px; background-color: #f0f0f0; border-radius: 5px;"><a href="{browser_url}">Follow link to view in browser</a></div>'
+                logger.info("Added HTML browser view link to email content")
+
             # Create full HTML document
             full_html = f"""<!DOCTYPE html>
 <html>
@@ -230,6 +257,7 @@ class EmailDistributor:
     </style>
 </head>
 <body>
+    {browser_link}
     {combined_html_content}
 </body>
 </html>"""
