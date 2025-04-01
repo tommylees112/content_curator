@@ -121,6 +121,7 @@ class RssFetcher(Fetcher):
                     )
                     published_date = None
                     if published_parsed:
+                        # TODO: parse the published_parsed into a datetime object
                         # Format to ISO 8601 string or keep as struct_time
                         # For simplicity, let's use the raw string from feedparser if available
                         published_date = entry.get("published", entry.get("updated"))

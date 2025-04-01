@@ -1,10 +1,11 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Literal, Optional
 
 from loguru import logger
 
 from src.content_curator.storage.dynamodb_state import DynamoDBState
 from src.content_curator.storage.s3_storage import S3Storage
+from src.content_curator.utils import parse_date
 
 
 class NewsletterCurator:
@@ -79,8 +80,8 @@ class NewsletterCurator:
             return result
 
         elif n_days is not None:
-            # Calculate the cutoff date as a datetime object
-            cutoff_date = datetime.now() - timedelta(days=n_days)
+            # Calculate the cutoff date as a timezone-aware datetime object with UTC timezone
+            cutoff_date = datetime.now(timezone.utc) - timedelta(days=n_days)
 
             # Filter items newer than the cutoff date
             result = []
@@ -89,30 +90,10 @@ class NewsletterCurator:
                 if not pub_date_str:
                     continue
 
-                try:
-                    # Try to parse the date string to a datetime object
-                    # Handle different formats that might be present
-                    if "T" in pub_date_str:
-                        # ISO format like "2023-06-22T13:44:50"
-                        pub_date = datetime.fromisoformat(
-                            pub_date_str.replace("Z", "+00:00")
-                        )
-                    elif "GMT" in pub_date_str:
-                        # Format like "Wed, 22 Jun 2023 13:44:50 GMT"
-                        pub_date_str = pub_date_str.replace("GMT", "+0000")
-                        pub_date = datetime.strptime(
-                            pub_date_str, "%a, %d %b %Y %H:%M:%S %z"
-                        )
-                    else:
-                        # Try a simple format as fallback
-                        pub_date = datetime.strptime(pub_date_str, "%Y-%m-%d %H:%M:%S")
-
-                    # Compare as datetime objects
-                    if pub_date >= cutoff_date:
-                        result.append(item)
-                except (ValueError, TypeError) as e:
-                    self.logger.warning(f"Could not parse date {pub_date_str}: {e}")
-                    continue
+                # Use our centralized date parsing utility
+                pub_date = parse_date(pub_date_str)
+                if pub_date and pub_date >= cutoff_date:
+                    result.append(item)
 
             self.logger.info(
                 f"Retrieved {len(result)} items from the last {n_days} days"

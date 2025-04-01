@@ -9,6 +9,7 @@ from typing import Dict, List, Optional, Tuple
 from dotenv import load_dotenv
 from loguru import logger
 
+from src.content_curator.curator.newsletter_curator import NewsletterCurator
 from src.content_curator.fetchers.rss_fetcher import RssFetcher
 from src.content_curator.processors.markdown_processor import MarkdownProcessor
 from src.content_curator.storage.dynamodb_state import DynamoDBState
@@ -34,6 +35,11 @@ def parse_arguments():
         "--summarize",
         action="store_true",
         help="Run the summarization stage to generate summaries",
+    )
+    parser.add_argument(
+        "--curate",
+        action="store_true",
+        help="Run the curation stage to create newsletters",
     )
     parser.add_argument("--all", action="store_true", help="Run all pipeline stages")
     parser.add_argument(
@@ -61,10 +67,11 @@ def parse_arguments():
         logger.info(f"URL hash: {args.id}")
 
     # If no arguments provided or --all specified, run all stages
-    if not (args.fetch or args.process or args.summarize) or args.all:
+    if not (args.fetch or args.process or args.summarize or args.curate) or args.all:
         args.fetch = True
         args.process = True
         args.summarize = True
+        args.curate = True
 
     return args
 
@@ -486,6 +493,41 @@ def run_summarize_stage(
     return summarized_items
 
 
+def run_curate_stage(
+    state_manager: DynamoDBState,
+    s3_storage: S3Storage,
+    most_recent: Optional[int] = 5,
+    n_days: Optional[int] = None,
+    summary_type: str = "short",
+) -> str:
+    """Run the curation stage to create newsletters and save them to S3."""
+    logger.info("Creating newsletter from recent content...")
+
+    # Initialize the newsletter curator
+    curator = NewsletterCurator(state_manager=state_manager, s3_storage=s3_storage)
+
+    # Get and format recent content
+    curated_content = curator.curate_recent_content(
+        most_recent=most_recent, n_days=n_days, summary_type=summary_type
+    )
+
+    if not curated_content:
+        logger.warning("No content available for newsletter curation.")
+        return ""
+
+    # Create a timestamp for the filename
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+
+    # Save the curated content to S3
+    s3_key = f"curated/newsletter_{timestamp}.md"
+    if s3_storage.store_content(s3_key, curated_content):
+        logger.info(f"Newsletter saved to S3 at {s3_key}")
+    else:
+        logger.error("Failed to save newsletter to S3")
+
+    return curated_content
+
+
 def save_last_item(processed_items: List[Dict], summarize_flag: bool):
     """Save the last processed item's content to a local file. For testing and debugging."""
     if not processed_items:
@@ -551,8 +593,22 @@ def main():
             args.id,
         )
 
-    # Save the last processed item for debugging
-    save_last_item(processed_items, args.summarize)
+    # Run curate stage if enabled
+    if args.curate:
+        curated_content = run_curate_stage(
+            state_manager,
+            s3_storage,
+            most_recent=10,  # Default to 10 most recent items
+        )
+        # Optionally save to local file for debugging
+        if curated_content:
+            try:
+                output_path = "/tmp/latest_newsletter.md"
+                with open(output_path, "w", encoding="utf-8") as f:
+                    f.write(curated_content)
+                logger.info(f"Saved latest newsletter to {output_path}")
+            except Exception as e:
+                logger.error(f"Error saving newsletter content: {e}")
 
 
 if __name__ == "__main__":

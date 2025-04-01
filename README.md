@@ -7,6 +7,7 @@ A system for fetching, processing, and curating content from various sources.
 - Fetches content from RSS/Atom feeds
 - Converts HTML to Markdown
 - Generates standard and brief summaries of the content
+- Creates curated newsletters from recent content
 - Stores content and metadata in AWS (S3 and DynamoDB)
 - Sends notifications to Slack
 
@@ -16,6 +17,7 @@ The system is designed with a modular architecture:
 
 - **Fetchers**: Components that fetch content from various sources (currently RSS feeds)
 - **Processors**: Convert and process the content (HTML to Markdown, generation of standard and brief summaries)
+- **Curator**: Combines recent content summaries into newsletters
 - **Storage**: Store the content and metadata (S3, DynamoDB)
 - **Distributors**: Send notifications about processed content (Slack)
 - **State Management**: Track which items have been processed and their status
@@ -28,6 +30,7 @@ The system uses AWS for storage:
   - `markdown/` - Original markdown files from sources ({GUID}.md)
   - `processed_summaries/` - Generated standard summaries ({GUID}.md)
   - `daily_updates/` - Generated daily updates ({date}.md)
+  - `curated/` - Generated newsletters ({datetime}.md)
 
 - **DynamoDB**: Stores metadata
   - Item GUID as the primary key
@@ -141,9 +144,21 @@ content-curator
 ```
 
 Options:
-- `--steps`: Comma-separated list of steps to run (default: "fetch,process,summarize,notify")
+- `--steps`: Comma-separated list of steps to run (default: "fetch,process,summarize,curate,notify")
 - `--batch-size`: Number of items to process in each batch (default: 5)
 - `--env-file`: Path to custom .env file
+
+You can also run specific pipeline stages:
+
+```bash
+python main.py --fetch --process --summarize --curate
+```
+
+Or just run a single stage:
+
+```bash
+python main.py --curate  # Only create a newsletter
+```
 
 ### Deploying to AWS Lambda
 
@@ -151,7 +166,8 @@ The system is designed to work with AWS Lambda for each processing step:
 
 1. `src/content_curator/handlers/rss_fetch_handler.py`: Fetches and processes RSS feeds
 2. `src/content_curator/handlers/summarize_handler.py`: Generates summaries
-3. `src/content_curator/handlers/slack_notify_handler.py`: Sends notifications
+3. `src/content_curator/handlers/curate_handler.py`: Creates newsletters
+4. `src/content_curator/handlers/slack_notify_handler.py`: Sends notifications
 
 You can deploy these Lambda functions using AWS SAM, AWS CDK, or other deployment tools.
 
