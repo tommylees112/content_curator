@@ -8,6 +8,7 @@ from botocore.exceptions import ClientError
 from dotenv import load_dotenv
 
 from src.content_curator.config import config
+from src.content_curator.models import ContentItem  # Import the ContentItem dataclass
 
 # Set page config must be the first Streamlit command
 st.set_page_config(layout="wide")  # Use wide layout for better table display
@@ -127,28 +128,40 @@ with tab_items:
     st.header("DynamoDB Metadata")
     df = pd.DataFrame(metadata_items)
 
-    # Define desired columns and order (handle missing columns gracefully)
-    display_columns_ordered = [
+    # Get field names from ContentItem dataclass
+    content_item_fields = [
+        field.name for field in ContentItem.__dataclass_fields__.values()
+    ]
+
+    # Define preferred display order for columns
+    preferred_order = [
         "guid",
         "published_date",
         "title",
         "md_path",
         "source_url",
         "fetch_date",
-        "is_fetched",
-        "is_processed",
-        "is_summarized",
-        "is_distributed",
         "summary_path",
         "last_updated",
+        # Add other columns in your preferred order
     ]
+
+    # Filter the preferred order to only include columns that exist in ContentItem
+    display_columns_ordered = [
+        col for col in preferred_order if col in content_item_fields
+    ]
+
+    # Add any remaining ContentItem fields that weren't in the preferred order
+    remaining_fields = [
+        field for field in content_item_fields if field not in display_columns_ordered
+    ]
+    display_columns_ordered.extend(remaining_fields)
+
     # Filter to columns that actually exist in the DataFrame
     display_columns = [col for col in display_columns_ordered if col in df.columns]
-    # Add any remaining columns not in the predefined list
-    other_columns = [col for col in df.columns if col not in display_columns]
 
     # Display the dataframe - allow users to sort by clicking headers
-    st.dataframe(df[display_columns + other_columns], use_container_width=True)
+    st.dataframe(df[display_columns], use_container_width=True)
 
     st.divider()
 

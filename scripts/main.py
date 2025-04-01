@@ -7,6 +7,7 @@ import yaml
 from dotenv import load_dotenv
 from loguru import logger
 
+sys.path.append(str(Path(__file__).parent.parent))
 from src.content_curator.config import config
 from src.content_curator.curator.newsletter_curator import NewsletterCurator
 from src.content_curator.fetchers.rss_fetcher import RSSFetcher
@@ -302,7 +303,7 @@ def run_curate_stage(
     s3_storage: S3Storage,
     most_recent: Optional[int] = None,
     n_days: Optional[int] = None,
-    summary_type: str = "short",
+    summary_type: str = "brief",
 ) -> str:
     """Run the curation stage to create newsletters and save them to S3."""
     logger.info("Creating newsletter from recent content...")
@@ -433,20 +434,31 @@ def main():
     # Run curate stage if enabled
     if args.curate:
         logger.info("\n\nRunning curate stage...\n\n".upper())
-        curated_content = run_curate_stage(
-            state_manager,
-            s3_storage,
-            most_recent=args.most_recent,
+        # Get summary types from config
+        summary_types_for_curation = config.curator_content_summary_types
+        logger.info(
+            f"Curating newsletters for summary types: {summary_types_for_curation}"
         )
-        # Optionally save to local file for debugging
-        if curated_content and args.save_locally:
-            try:
-                output_path = "/tmp/latest_newsletter.md"
-                with open(output_path, "w", encoding="utf-8") as f:
-                    f.write(curated_content)
-                logger.info(f"Saved latest newsletter to {output_path}")
-            except Exception as e:
-                logger.error(f"Error saving newsletter content: {e}")
+
+        for summary_type in summary_types_for_curation:
+            logger.info(f"Running curation for summary type: {summary_type}")
+            curated_content = run_curate_stage(
+                state_manager,
+                s3_storage,
+                most_recent=args.most_recent,
+                summary_type=summary_type,
+            )
+            # Optionally save to local file for debugging
+            if curated_content and args.save_locally:
+                try:
+                    output_path = f"/tmp/latest_newsletter_{summary_type}.md"
+                    with open(output_path, "w", encoding="utf-8") as f:
+                        f.write(curated_content)
+                    logger.info(
+                        f"Saved latest {summary_type} newsletter to {output_path}"
+                    )
+                except Exception as e:
+                    logger.error(f"Error saving {summary_type} newsletter content: {e}")
 
     logger.info(f"Pipeline completed. Log file: {config.log_file}")
 

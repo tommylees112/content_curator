@@ -1,6 +1,8 @@
 from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
+
+SummaryType = Literal["standard", "brief"]
 
 
 @dataclass

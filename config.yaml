@@ -20,9 +20,6 @@ logging:
 # Global settings for the content curation pipeline
 # pipeline:
 
-curator:
-  default_most_recent: 10  # Default number of most recent items to include in newsletters
-
 # RSS Configuration
 # Settings specific to RSS feed processing
 rss:
@@ -34,3 +31,9 @@ rss:
 summarizer:
   model_name: gemini-1.5-flash  # Name of the AI model to use for summarization
   default_summary_types: ["brief"]  # Types of summaries to generate by default 
+
+# Curator Configuration
+# Settings for the content curation process
+curator:
+  default_most_recent: 10  # Default number of most recent items to include in newsletters
+  content_summary_types: ["brief"]  # Types of summaries to include in newsletters

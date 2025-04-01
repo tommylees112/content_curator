@@ -9,13 +9,12 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_openai import ChatOpenAI
 from loguru import logger
 
-from src.content_curator.models import ContentItem
+from src.content_curator.models import ContentItem, SummaryType
 from src.content_curator.storage.dynamodb_state import DynamoDBState
 from src.content_curator.storage.s3_storage import S3Storage
 from src.content_curator.utils import is_worth_summarizing
 
 # Define prompt types
-SummaryType = Literal["standard", "brief"]
 ModelName = Literal[
     "gemini-1.5-flash", "gemini-2.0-flash", "gpt-3.5-turbo", "gpt-4-turbo", "gpt-4o"
 ]

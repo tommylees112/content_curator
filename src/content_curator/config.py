@@ -118,6 +118,11 @@ class Config:
         """Get default summary types."""
         return self.get("summarizer", "default_summary_types", default=["brief"])
 
+    @property
+    def curator_content_summary_types(self) -> List[str]:
+        """Get the types of summaries to include in newsletters."""
+        return self.get("curator", "content_summary_types", default=["brief"])
+
 
 # Create a global config instance
 config = Config()

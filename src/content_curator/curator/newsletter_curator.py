@@ -1,9 +1,9 @@
 from datetime import datetime, timedelta, timezone
-from typing import List, Literal, Optional, Tuple
+from typing import List, Optional, Tuple
 
 from loguru import logger
 
-from src.content_curator.models import ContentItem
+from src.content_curator.models import ContentItem, SummaryType
 from src.content_curator.storage.dynamodb_state import DynamoDBState
 from src.content_curator.storage.s3_storage import S3Storage
 from src.content_curator.utils import parse_date
@@ -32,7 +32,7 @@ class NewsletterCurator:
         self,
         most_recent: Optional[int] = None,
         n_days: Optional[int] = None,
-        summary_type: Literal["short", "standard"] = "short",
+        summary_type: SummaryType = "brief",
     ) -> List[ContentItem]:
         """
         Get recent content summaries based on either the most recent n items or the items
@@ -41,7 +41,7 @@ class NewsletterCurator:
         Args:
             most_recent: Number of most recent items to get
             n_days: Number of days to look back from today
-            summary_type: Type of summary to retrieve ("short" for short_summary_path,
+            summary_type: Type of summary to retrieve ("brief" for short_summary_path,
                         "standard" for summary_path)
 
         Returns:
@@ -52,7 +52,7 @@ class NewsletterCurator:
             return []
 
         # Get all items with summaries based on path existence
-        path_field = "short_summary_path" if summary_type == "short" else "summary_path"
+        path_field = "short_summary_path" if summary_type == "brief" else "summary_path"
 
         # Use the path-based query method
         all_items = self.state_manager.get_items_by_status_paths(
@@ -110,7 +110,7 @@ class NewsletterCurator:
     def format_recent_content(
         self,
         items: List[ContentItem],
-        summary_type: Literal["short", "standard"] = "short",
+        summary_type: SummaryType = "brief",
     ) -> str:
         """
         Format the recent content items in the specified format.
@@ -133,8 +133,8 @@ class NewsletterCurator:
         formatted_content = "## Recent Content\n\n"
 
         # Determine which attributes to use based on summary_type
-        summary_attr = "short_summary" if summary_type == "short" else "summary"
-        path_attr = "short_summary_path" if summary_type == "short" else "summary_path"
+        summary_attr = "short_summary" if summary_type == "brief" else "summary"
+        path_attr = "short_summary_path" if summary_type == "brief" else "summary_path"
 
         for item in items:
             title = item.title or "Untitled"
@@ -177,7 +177,7 @@ class NewsletterCurator:
         self,
         most_recent: Optional[int] = None,
         n_days: Optional[int] = None,
-        summary_type: Literal["short", "standard"] = "short",
+        summary_type: SummaryType = "brief",
     ) -> Tuple[str, List[str]]:
         """
         Get and format recent content for a newsletter.
@@ -185,7 +185,7 @@ class NewsletterCurator:
         Args:
             most_recent: Number of most recent items to include
             n_days: Number of days to look back from today
-            summary_type: Type of summary to use ("short" or "standard")
+            summary_type: Type of summary to use ("brief" or "standard")
 
         Returns:
             Tuple containing:
@@ -220,7 +220,7 @@ class NewsletterCurator:
         self,
         most_recent: Optional[int] = 5,
         n_days: Optional[int] = None,
-        summary_type: Literal["short", "standard"] = "short",
+        summary_type: SummaryType = "brief",
     ) -> str:
         """
         Generate a newsletter, save it to S3, and update DynamoDB state.
@@ -229,7 +229,7 @@ class NewsletterCurator:
         Args:
             most_recent: Number of most recent items to include
             n_days: Number of days to look back from today
-            summary_type: Type of summary to use ("short" or "standard")
+            summary_type: Type of summary to use ("brief" or "standard")
 
         Returns:
             The generated newsletter content
@@ -292,10 +292,10 @@ if __name__ == "__main__":
     # Get short summaries (most recent 5)
     print("SHORT SUMMARIES (MOST RECENT 5):")
     # content, included_items = curator.curate_recent_content(
-    #     n_days=3, summary_type="short"
+    #     n_days=3, summary_type="brief"
     # )
     content, included_items = curator.curate_recent_content(
-        most_recent=5, summary_type="short"
+        most_recent=5, summary_type="brief"
     )
 
     print(content)
