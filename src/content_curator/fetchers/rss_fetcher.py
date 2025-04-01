@@ -46,9 +46,22 @@ class RSSFetcher(Fetcher):
         """Gets URLs either from file or from specific_url parameter."""
         if self.specific_url:
             return [self.specific_url]
+
         elif self.url_file_path:
-            with open(self.url_file_path, "r") as f:
-                return [line.strip() for line in f if line.strip()]
+            with open(self.url_file_path, "r", encoding="utf-8") as f:
+                # Process URLs one by one for better cleaning
+                urls = []
+                for line in f:
+                    # Skip empty lines and comments
+                    clean_line = line.strip()
+                    if clean_line and not clean_line.startswith("#"):
+                        # Ensure URL has no invisible characters or extra whitespace
+                        clean_url = "".join(c for c in clean_line if c.isprintable())
+                        urls.append(clean_url)
+
+                self.logger.debug(f"Loaded {len(urls)} URLs from {self.url_file_path}")
+                return urls
+
         else:
             raise ValueError("Either specific_url or url_file_path must be provided")
 

@@ -43,7 +43,7 @@ distributor:
   email:
     smtp_server: smtp.gmail.com  # SMTP server for sending emails
     smtp_port: 587  # SMTP port (587 for TLS, 465 for SSL)
-    sender_email: thomas.lees112@gmail.com  # Email address to send from
+    sender_email:  # Email address to send from (leave empty to use env var)
     sender_password: ""  # App password for Gmail (leave empty to use env var)
     default_recipient: thomas.lees112@gmail.com  # Default recipient email address
     subject_prefix: "[Content Curator] "  # Prefix for email subject lines
