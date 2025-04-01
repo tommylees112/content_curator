@@ -187,15 +187,12 @@ if selected_display_name:
 
     selected_item = selected_item_list[0]
 
-    st.subheader(f"Details for: {selected_item.get('title', selected_guid)}")
-    # Display all metadata for the selected item as JSON
-    st.json(selected_item)
-
     col1, col2 = st.columns(2)  # Create two columns for content
 
     # Fetch and display Markdown content from S3
     markdown_s3_path = selected_item.get("s3_path")
     with col1:
+        # HEADING: Markdown
         st.subheader("Processed Markdown")
         if markdown_s3_path:
             with st.spinner(f"Fetching {markdown_s3_path} from S3..."):
@@ -225,11 +222,18 @@ if selected_display_name:
         else:
             st.info("No processed markdown S3 path ('s3_path') found for this item.")
 
+        # HEADING: JSON details
+        st.subheader(f"Details for: {selected_item.get('title', selected_guid)}")
+        # Display all metadata for the selected item as JSON in a collapsed expander
+        with st.expander("View JSON Details", expanded=False):
+            st.json(selected_item)
+
     # Fetch and display Summary content from S3
     summary_s3_path = selected_item.get("summary_path")
     short_summary_path = selected_item.get("short_summary_path")
 
     with col2:
+        # HEADING: summaries
         st.subheader("Summary")
 
         # Display short summary if available
@@ -251,13 +255,6 @@ if selected_display_name:
                     # Use the S3Storage class method
                     summary_content = s3_storage.get_content(summary_s3_path)
                     if summary_content:
-                        # # Use st.text_area for potentially long summaries
-                        # st.text_area(
-                        #     "Summary Content",
-                        #     summary_content,
-                        #     height=400,
-                        #     key="summary_content",
-                        # )
                         # Or use st.markdown
                         st.markdown(summary_content, unsafe_allow_html=False)
                     elif summary_content is None:

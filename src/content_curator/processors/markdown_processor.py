@@ -69,12 +69,15 @@ class MarkdownProcessor:
         header = f"Date Updated: {fetch_date}\nDate Published: {published_date}\n\nTitle: {title}\n\nURL Source: {link}\n\nMarkdown Content:\n"
         return header + markdown_content
 
-    def is_paywall_or_teaser(self, markdown_content: str) -> bool:
+    def is_paywall_or_teaser(
+        self, markdown_content: str, min_failures_to_reject: int = 2
+    ) -> bool:
         """
         Detect if content appears to be behind a paywall or is just a teaser.
 
         Args:
             markdown_content: The markdown content to check
+            min_failures_to_reject: Minimum number of quality checks that must fail to mark as paywall/teaser
 
         Returns:
             True if content appears to be a teaser or behind a paywall
@@ -96,12 +99,15 @@ class MarkdownProcessor:
         text_only = re.sub(r"[#*_`]", "", text_only)  # Remove markdown formatting
         clean_text = text_only.strip()
 
+        # Track failed checks
+        failed_checks = 0
+
         # Check for very short content (less than 100 characters of actual text)
         if len(clean_text) < 100:
             self.logger.warning(
                 f"Content detected as too short: {len(clean_text)} chars"
             )
-            return True
+            failed_checks += 1
 
         # Look for typical paywall phrases
         paywall_patterns = [
@@ -122,17 +128,30 @@ class MarkdownProcessor:
         sample_text = clean_text[:500].lower()
 
         # Check for paywall patterns
+        found_paywall_pattern = False
         for pattern in paywall_patterns:
             if re.search(pattern, sample_text, re.IGNORECASE):
-                link_ratio = len(re.findall(r"\[.*?\]\(.*?\)", content_body)) / max(
-                    1, len(clean_text) / 100
-                )
-                # If we found a paywall pattern and the content has a high density of links
-                if link_ratio > 0.2:  # More than 1 link per 500 chars
-                    self.logger.info(
-                        f"Content detected as paywall/teaser: found '{pattern}'"
-                    )
-                    return True
+                found_paywall_pattern = True
+                self.logger.info(f"Found paywall pattern: '{pattern}'")
+                break
+
+        if found_paywall_pattern:
+            failed_checks += 1
+
+        # Check link ratio
+        link_ratio = len(re.findall(r"\[.*?\]\(.*?\)", content_body)) / max(
+            1, len(clean_text) / 100
+        )
+        if link_ratio > 0.2:  # More than 1 link per 500 chars
+            self.logger.info(f"Content has high link ratio: {link_ratio:.2f}")
+            failed_checks += 1
+
+        # Only mark as paywall if enough checks failed
+        if failed_checks >= min_failures_to_reject:
+            self.logger.info(
+                f"Content marked as paywall/teaser: {failed_checks} checks failed (minimum {min_failures_to_reject} required)"
+            )
+            return True
 
         return False
 
