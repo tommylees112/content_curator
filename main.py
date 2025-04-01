@@ -86,7 +86,7 @@ def run_fetch_stage(state_manager: DynamoDBState) -> List[Dict]:
     """Run the fetch stage to get new content."""
     # Initialize fetcher
     rss_url_file: Path = Path(__file__).parent / "data" / "rss_urls.txt"
-    fetcher: RssFetcher = RssFetcher(url_file_path=str(rss_url_file))
+    fetcher: RssFetcher = RssFetcher(url_file_path=str(rss_url_file), max_items=5)
 
     logger.info("Fetching content...")
     fetched_items: List[Dict] = fetcher.run()

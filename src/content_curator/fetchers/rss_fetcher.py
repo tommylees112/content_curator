@@ -10,15 +10,17 @@ from src.content_curator.utils import generate_guid_for_rss_entry
 class RssFetcher(Fetcher):
     """Fetcher implementation for RSS and Atom feeds."""
 
-    def __init__(self, url_file_path: str):
+    def __init__(self, url_file_path: str, max_items: Optional[int] = None):
         """
         Initializes the RSS Fetcher.
 
         Args:
             url_file_path: Path to the text file containing RSS feed URLs (one per line).
+            max_items: Maximum number of most recent items to fetch per feed. If None, fetch all items.
         """
         super().__init__(source_identifier=url_file_path)  # Use file path as identifier
         self.url_file_path = url_file_path
+        self.max_items = max_items
 
     def _read_urls_from_file(self) -> List[str]:
         """Reads feed URLs from the specified text file."""
@@ -91,14 +93,25 @@ class RssFetcher(Fetcher):
                     self.logger.warning(
                         f"Feed may be malformed: {url}. Reason: {feed_data.bozo_exception}"
                     )
-                    # Decide if you want to continue processing potentially partial data or skip
-                    # continue # Example: Skip malformed feeds entirely
 
-                self.logger.debug(
-                    f"Found {len(feed_data.entries)} entries in feed: {url}"
-                )
+                # Get entries and sort by published date if available
+                entries = feed_data.entries
+                if self.max_items is not None:
+                    # Sort entries by published date if available, otherwise use updated date
+                    entries.sort(
+                        key=lambda x: x.get(
+                            "published_parsed", x.get("updated_parsed", datetime.min)
+                        ),
+                        reverse=True,  # Most recent first
+                    )
+                    entries = entries[: self.max_items]
+                    self.logger.info(
+                        f"Limited to {self.max_items} most recent items for feed: {url}"
+                    )
 
-                for entry in feed_data.entries:
+                self.logger.debug(f"Processing {len(entries)} entries in feed: {url}")
+
+                for entry in entries:
                     title = entry.get("title", "No Title Provided")
                     link = entry.get(
                         "link", None
