@@ -14,6 +14,7 @@ dependencies = [
     "langchain-openai>=0.3.11",
     "langchain>=0.3.21",
     "loguru>=0.7.3",
+    "markdown>=3.7",
     "markdownify>=1.1.0",
     "pandas>=2.2.3",
     "pyyaml>=6.0.2",

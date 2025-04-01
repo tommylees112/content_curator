@@ -37,6 +37,26 @@ class Config:
                 "AWS_DYNAMODB_TABLE_NAME"
             )
 
+        # Email Configuration
+        if os.getenv("SMTP_SERVER"):
+            self.config.setdefault("distributor", {}).setdefault("email", {})[
+                "smtp_server"
+            ] = os.getenv("SMTP_SERVER")
+        if os.getenv("SMTP_PORT"):
+            self.config.setdefault("distributor", {}).setdefault("email", {})[
+                "smtp_port"
+            ] = int(os.getenv("SMTP_PORT"))
+        if os.getenv("SENDER_EMAIL"):
+            self.config.setdefault("distributor", {}).setdefault("email", {})[
+                "sender_email"
+            ] = os.getenv("SENDER_EMAIL")
+
+        # Look for SENDER_PASSWORD in .env (preferred)
+        if os.getenv("SENDER_PASSWORD"):
+            self.config.setdefault("distributor", {}).setdefault("email", {})[
+                "sender_password"
+            ] = os.getenv("SENDER_PASSWORD")
+
     def get(self, *keys: str, default: Any = None) -> Any:
         """Get a configuration value using dot notation."""
         value = self.config
@@ -130,6 +150,43 @@ class Config:
     def curator_content_summary_types(self) -> List[str]:
         """Get the types of summaries to include in newsletters."""
         return self.get("curator", "content_summary_types", default=["brief"])
+
+    @property
+    def smtp_server(self) -> str:
+        """Get SMTP server address."""
+        return self.get("distributor", "email", "smtp_server", default="smtp.gmail.com")
+
+    @property
+    def smtp_port(self) -> int:
+        """Get SMTP port."""
+        return self.get("distributor", "email", "smtp_port", default=587)
+
+    @property
+    def sender_email(self) -> str:
+        """Get sender email address."""
+        return self.get("distributor", "email", "sender_email", default="")
+
+    @property
+    def sender_password(self) -> str:
+        """Get sender email password."""
+        return self.get("distributor", "email", "sender_password", default="")
+
+    @property
+    def default_recipient(self) -> str:
+        """Get default recipient email address."""
+        return self.get(
+            "distributor",
+            "email",
+            "default_recipient",
+            default="thomas.lees112@gmail.com",
+        )
+
+    @property
+    def email_subject_prefix(self) -> str:
+        """Get email subject prefix."""
+        return self.get(
+            "distributor", "email", "subject_prefix", default="[Content Curator] "
+        )
 
 
 # Create a global config instance

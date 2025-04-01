@@ -20,6 +20,9 @@ In today's information-rich world, keeping up with multiple content sources can 
   - Standard summaries for detailed reading
 - Creates curated newsletters from recent content
 - Stores content and metadata in AWS (S3 and DynamoDB)
+- Converts Markdown content to styled HTML with clickable links
+- Generates secure pre-signed URLs for accessing content
+- Distributes content via email as HTML newsletters
 - Sends notifications to Slack
 - Supports both local and serverless (AWS Lambda) deployment
 
@@ -48,6 +51,12 @@ The system is designed with a modular, pipeline-based architecture that emphasiz
    - `NewsletterCurator`: Creates curated newsletters
    - Future support planned for Slack and email distribution
    - Interface: `curate(items: List[ContentItem]) -> OutputType`
+
+5. **Distributors (Distribution Layer)**
+   - `HTMLConverter`: Converts Markdown content to HTML with styling and automatic link detection
+   - `AWSURLDistributor`: Generates pre-signed URLs for S3 content, including HTML-converted content
+   - `EmailDistributor`: Sends content via email as HTML newsletters to specified recipients
+   - Interface: `distribute(content_key: str) -> str`
 
 ### Storage Layer
 
@@ -89,6 +98,7 @@ The system uses AWS for storage:
   - `processed_summaries/` - Generated standard summaries ({GUID}.md)
   - `daily_updates/` - Generated daily updates ({date}.md)
   - `curated/` - Generated newsletters ({datetime}.md)
+  - Corresponding HTML versions - Automatically generated HTML files ({filename}.html)
 
 - **DynamoDB**: Stores metadata
   - Item GUID as the primary key
@@ -116,6 +126,9 @@ The system uses AWS for storage:
 │ │ ├── standard_summary.txt # Prompt for standard summary
 │ │ └── brief_summary.txt # Prompt for brief summary
 │ ├── distributors/ # Module for sending content out
+│ │ ├── aws_url_distributor.py # Distributes content via pre-signed URLs
+│ │ ├── html_converter.py # Converts markdown to HTML
+│ │ └── email_distributor.py # Distributes content via email
 │ ├── storage/ # Module for interacting with data stores
 │ ├── state/ # Module for managing processing state
 │ └── handlers/ # Entry points for cloud functions/services
@@ -181,9 +194,48 @@ If you prefer to set up resources manually:
    # Slack Configuration (optional)
    SLACK_WEBHOOK_URL=your-slack-webhook-url
    
+   # Email Configuration (optional)
+   SMTP_SERVER=smtp.gmail.com
+   SMTP_PORT=587
+   SENDER_EMAIL=your-email@gmail.com
+   APP_PASSWORD=your-app-password
+   
    # Application Configuration
    ENVIRONMENT=development
    ```
+
+## Email Distribution
+
+To distribute content via email, you'll need to:
+
+1. Set up email configuration in `.env` or `config.yaml`
+2. For Gmail, create an App Password:
+   - Enable 2-Step Verification on your Google account
+   - Go to Google Account → Security → App passwords
+   - Generate a new App Password for "Mail"
+   - Use this 16-character password in your configuration
+
+Example code to send an email:
+
+```python
+from src.content_curator.storage.s3_storage import S3Storage
+from src.content_curator.distributors.email_distributor import EmailDistributor
+
+# Initialize S3 storage
+s3_storage = S3Storage()
+
+# Initialize email distributor
+distributor = EmailDistributor(s3_storage=s3_storage)
+
+# Send a single content file as email
+distributor.distribute("curated/latest.md", recipient_email="user@example.com")
+
+# Or send multiple content files in one email
+distributor.distribute_multiple(
+    ["curated/file1.md", "curated/file2.md"], 
+    subject="Weekly Content Update"
+)
+```
 
 ## Usage
 

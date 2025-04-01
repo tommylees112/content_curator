@@ -21,6 +21,7 @@
   - [x] Move more stage logic from `main.py` to the respective classes
 - [x] Make configuration more centralized, moving hardcoded values into a config file
 - [x] rename RssFetcher to RSSFetcher
+- [x] Create a distributor class that will take in a list of content items and distribute them to the appropriate channels. how to do this in an extensible way (slack, email, whatsapp, html, etc.).
 
 ## TODO
 - [ ] Add comprehensive unit tests for the ContentItem implementation
