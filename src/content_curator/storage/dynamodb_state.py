@@ -290,9 +290,9 @@ class DynamoDBState:
             ]
             if update_fields:
                 update_summary = ", ".join(update_fields)
-                self.logger.info(f"Updated metadata for item {guid}: {update_summary}")
+                self.logger.debug(f"Updated metadata for item {guid}: {update_summary}")
             else:
-                self.logger.info(f"Updated metadata for item {guid}")
+                self.logger.debug(f"Updated metadata for item {guid}")
 
             return True
 
