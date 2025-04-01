@@ -16,14 +16,15 @@
 - [x] Clean up original dictionary-based methods after fully validating the ContentItem implementation
 - [x] refactor the ContentItem and its uses throughout the pipeline to simply look for summary_path and short_summary_path instead of having the boolean flags: is_fetched, is_processed, is_summarized, is_distributed. Processes that use these  should just look at the paths. in all of the fetchers, processors, summarizers and curators. Remove references to the boolean flags. Do not give warnings or deprecations, just make the changes.
 - [x] Only run the short summary stage by default. We can do the full summary in two ways 1) run when the user asks for it 2) run when that item is part of a newsletter / curated into the newsletter. Come up with designs and ways of doing this that maintain the separation of concerns between stages.
+- [x] Consider refactoring the pipeline to make each stage more independent:
+  - [x] Extract the `get_items_for_stage()` helper function to centralize item loading logic
+  - [x] Move more stage logic from `main.py` to the respective classes
+- [x] Make configuration more centralized, moving hardcoded values into a config file
+- [x] rename RssFetcher to RSSFetcher
 
 ## TODO
 - [ ] Add comprehensive unit tests for the ContentItem implementation
 - [ ] Add docstrings explaining the purpose and lifecycle of ContentItem fields
-- [ ] Consider refactoring the pipeline to make each stage more independent:
-  - [x] Extract the `get_items_for_stage()` helper function to centralize item loading logic
-  - [x] Move more stage logic from `main.py` to the respective classes
-- [ ] Make configuration more centralized, moving hardcoded values into a config file
 - [ ] Prepare for potential serverless architecture:
   - [ ] Create a `functions/` directory with handlers for each pipeline stage
   - [ ] Implement serverless function entry points for each stage
@@ -31,7 +32,6 @@
 - [ ] Improve error handling with specific exception types and retry logic
 - [ ] separation of concerns means that the differnet components do not rely on each other but only on ContentItem, DynamoDBState, S3Storage. Check that all of the components are only using ContentItem, DynamoDBState, S3Storage and utils interfaces and not each other / other components. 
 - [ ] maintain a very strict set of data contracts between the components - define the contracts and enforce them. Where should these be defined? In the directory? in a subdirectory README or the original README? or somewhere else?.
-- [x] rename RssFetcher to RSSFetcher
 - [ ] Newsletter should have ability to create a full summary when it does not yet exist
 ```python
     def ensure_full_summaries(self, items: List[ContentItem]) -> List[ContentItem]:

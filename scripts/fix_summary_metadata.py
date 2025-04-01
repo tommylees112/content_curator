@@ -1,4 +1,3 @@
-import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -8,38 +7,8 @@ from loguru import logger
 
 sys.path.append(str(Path(__file__).parent.parent))
 
+from scripts.main import setup_services
 from src.content_curator.processors.markdown_processor import MarkdownProcessor
-from src.content_curator.storage.dynamodb_state import DynamoDBState
-from src.content_curator.storage.s3_storage import S3Storage
-from src.content_curator.utils import check_resources
-
-
-def setup_services():
-    """Initialize and check AWS services."""
-    # Get AWS configuration from environment variables
-    aws_region = os.getenv("AWS_REGION", "us-east-1")
-    s3_bucket_name = os.getenv("AWS_S3_BUCKET_NAME", "content-curator")
-    dynamodb_table_name = os.getenv(
-        "AWS_DYNAMODB_TABLE_NAME", "content-curator-metadata"
-    )
-
-    # Initialize services
-    state_manager = DynamoDBState(
-        dynamodb_table_name=dynamodb_table_name, aws_region=aws_region
-    )
-    s3_storage = S3Storage(s3_bucket_name=s3_bucket_name, aws_region=aws_region)
-
-    # Check if resources exist
-    s3_exists = check_resources(s3_storage)
-    dynamo_exists = check_resources(state_manager)
-
-    if not (s3_exists and dynamo_exists):
-        logger.error(
-            "Required AWS resources do not exist. Please ensure your S3 bucket and DynamoDB table are created."
-        )
-        sys.exit(1)
-
-    return state_manager, s3_storage
 
 
 def fix_summary_metadata(dry_run=False, evaluate_content=False):

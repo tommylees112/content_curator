@@ -1,57 +1,84 @@
 # Content Curator
 
-A system for fetching, processing, and curating content from various sources.
+A system for automatically fetching, processing, and curating content from various sources into easy-to-consume summaries and newsletters. The system helps users stay informed by automatically processing and summarizing content from their favorite sources, making it easier to consume large amounts of information efficiently.
+
+## Problem Statement
+
+In today's information-rich world, keeping up with multiple content sources can be overwhelming. Content Curator solves this by:
+- Automatically fetching content from RSS/Atom feeds and other sources
+- Converting content into clean, readable formats
+- Generating concise summaries of varying lengths (brief and detailed)
+- Creating curated newsletters that combine the most relevant content
+- Managing the entire pipeline from fetching to distribution
 
 ## Features
 
 - Fetches content from RSS/Atom feeds
-- Converts HTML to Markdown
-- Generates standard and brief summaries of the content
+- Converts HTML to Markdown for clean, consistent formatting
+- Generates two types of summaries:
+  - Brief summaries for quick scanning
+  - Standard summaries for detailed reading
 - Creates curated newsletters from recent content
 - Stores content and metadata in AWS (S3 and DynamoDB)
 - Sends notifications to Slack
+- Supports both local and serverless (AWS Lambda) deployment
 
 ## Architecture
 
-The system is designed with a modular architecture:
+The system is designed with a modular, pipeline-based architecture that emphasizes separation of concerns and clear data contracts between components. Each component has a specific responsibility and interacts with others through well-defined interfaces.
 
-- **Fetchers**: Components that fetch content from various sources (currently RSS feeds)
-- **Processors**: Convert and process the content (HTML to Markdown, generation of standard and brief summaries)
-- **Curator**: Combines recent content summaries into newsletters
-- **Storage**: Store the content and metadata (S3, DynamoDB)
-- **Distributors**: Send notifications about processed content (Slack)
-- **State Management**: Track which items have been processed and their status
+### Core Components
 
-RSSFetcher: Responsible only for fetching content from RSS feeds and returning structured data (like raw HTML, title, link, dates). It might interact with storage to save the raw HTML, but shouldn't know about processing or summarization statuses.
-MarkdownProcessor: Takes raw HTML (or a reference like an S3 path), converts it to Markdown, determines if it's suitable for summarization (is_paywall, length checks), and returns the Markdown content and flags. It interacts with storage to get HTML and save Markdown.
-Summarizer: Takes Markdown content (or a reference), generates summaries, and returns them. Interacts with storage to get Markdown and save summaries.
-NewsletterCurator: Queries the DynamoDBState for items meeting curation criteria (e.g., summarized recently), fetches necessary summaries using S3Storage, formats the newsletter, saves it using S3Storage, and potentially updates item state via DynamoDBState.
-DynamoDBState & S3Storage: Solely responsible for interacting with AWS DynamoDB and S3 respectively. No business logic like parsing or summarization should exist here.
+1. **Fetchers (Input Layer)**
+   - `RSSFetcher`: Fetches content from RSS feeds
+   - Future support planned for Web, API, and other content sources
+   - Interface: `fetch() -> List[ContentItem]`
 
-Pipeline Components:
-1. Fetchers (Input Layer)
-   - RSSFetcher
-   - Future: WebFetcher, APIFetcher, etc.
-   Interface: fetch() -> List[ContentItem]
+2. **Processors (Transform Layer)**
+   - `MarkdownProcessor`: Converts HTML to Markdown
+   - Future support planned for PDF, DOC, and other formats
+   - Interface: `process(item: ContentItem) -> ContentItem`
 
-2. Processors (Transform Layer)
-   - MarkdownProcessor
-   - Future: PDFProcessor, DocProcessor, etc.
-   Interface: process(item: ContentItem) -> ContentItem
+3. **Enrichers (Enrichment Layer)**
+   - `Summarizer`: Generates content summaries
+   - Future support planned for categorization and keyword extraction
+   - Interface: `enrich(item: ContentItem) -> ContentItem`
 
-3. Enrichers (Enrichment Layer)
-   - Summarizer
-   - Future: Categorizer, KeywordExtractor, etc.
-   Interface: enrich(item: ContentItem) -> ContentItem
+4. **Curators (Output Layer)**
+   - `NewsletterCurator`: Creates curated newsletters
+   - Future support planned for Slack and email distribution
+   - Interface: `curate(items: List[ContentItem]) -> OutputType`
 
-4. Curators (Output Layer)
-   - NewsletterCurator
-   - Future: SlackCurator, EmailCurator, etc.
-   Interface: curate(items: List[ContentItem]) -> OutputType
+### Storage Layer
 
-Storage Layer:
-- S3Storage: Content storage
-- DynamoDBState: Metadata/state management
+- **S3Storage**: Manages content storage
+  - Stores raw HTML, markdown, and generated summaries
+  - Handles file operations and content retrieval
+- **DynamoDBState**: Manages metadata and processing state
+  - Tracks item status and processing history
+  - Maintains relationships between content items
+
+### Design Principles
+
+1. **Clear Data Contracts**
+   - Uses `ContentItem` dataclass throughout the pipeline
+   - Each stage enriches the ContentItem with additional data
+   - Strict interface definitions between components
+
+2. **Independent Components**
+   - Each component only depends on ContentItem, DynamoDBState, and S3Storage
+   - No direct dependencies between processing stages
+   - Components can be deployed and scaled independently
+
+3. **State-Driven Processing**
+   - Pipeline stages query DynamoDBState for items to process
+   - No direct passing of items between stages
+   - Enables distributed processing and better error handling
+
+4. **Flexible Deployment**
+   - Supports both local and serverless architectures
+   - Components can be deployed as AWS Lambda functions
+   - Easy to extend with new content sources and output formats
 
 ## AWS Storage Structure
 
@@ -65,7 +92,7 @@ The system uses AWS for storage:
 
 - **DynamoDB**: Stores metadata
   - Item GUID as the primary key
-  - Metadata includes title, source, timestamps, processing status, standard summary, brief summary
+  - Metadata includes title, source, timestamps, processing status
   - References to file locations in S3
 
 ## Directory Structure
@@ -84,7 +111,7 @@ The system uses AWS for storage:
 │ ├── core/ # Core logic, interfaces, shared utilities
 │ ├── fetchers/ # Module for different data fetchers
 │ ├── processors/ # Module for content processing logic
-│ │ └── summarizers/ # Module for content summarization // Added summarizers sub-directory
+│ │ └── summarizers/ # Module for content summarization
 │ │ ├── summarizer.py # Main summarizer class
 │ │ ├── standard_summary.txt # Prompt for standard summary
 │ │ └── brief_summary.txt # Prompt for brief summary

@@ -1,16 +1,13 @@
-import os
 import sys
 from datetime import datetime
 from pathlib import Path
 
-from dotenv import load_dotenv
 from loguru import logger
 
 sys.path.append(str(Path(__file__).parent.parent))
 
+from scripts.main import setup_services
 from src.content_curator.models import ContentItem
-from src.content_curator.storage.dynamodb_state import DynamoDBState
-from src.content_curator.storage.s3_storage import S3Storage
 from src.content_curator.summarizers.summarizer import Summarizer
 from src.content_curator.utils import check_resources
 
@@ -71,21 +68,7 @@ def run_summarization_process():
     Process items that need summarization from DynamoDB, generate summaries,
     and update the metadata.
     """
-    # Load environment variables
-    load_dotenv()
-
-    # Get AWS configuration from environment variables
-    aws_region = os.getenv("AWS_REGION", "us-east-1")
-    s3_bucket_name = os.getenv("AWS_S3_BUCKET_NAME", "content-curator")
-    dynamodb_table_name = os.getenv(
-        "AWS_DYNAMODB_TABLE_NAME", "content-curator-metadata"
-    )
-
-    # Initialize services
-    state_manager = DynamoDBState(
-        dynamodb_table_name=dynamodb_table_name, aws_region=aws_region
-    )
-    s3_storage = S3Storage(s3_bucket_name=s3_bucket_name, aws_region=aws_region)
+    state_manager, s3_storage = setup_services()
     summarizer = Summarizer()
 
     # Check if resources exist

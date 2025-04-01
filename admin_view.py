@@ -1,4 +1,3 @@
-import os
 import sys
 from pathlib import Path
 
@@ -7,6 +6,8 @@ import pandas as pd
 import streamlit as st
 from botocore.exceptions import ClientError
 from dotenv import load_dotenv
+
+from src.content_curator.config import config
 
 # Set page config must be the first Streamlit command
 st.set_page_config(layout="wide")  # Use wide layout for better table display
@@ -20,9 +21,9 @@ from src.content_curator.storage import DynamoDBState, S3Storage
 load_dotenv()
 
 # Get AWS config from environment variables (provide defaults from your main.py)
-S3_BUCKET_NAME = os.getenv("AWS_S3_BUCKET_NAME", "content-curator")
-DYNAMODB_TABLE_NAME = os.getenv("AWS_DYNAMODB_TABLE_NAME", "content-curator-metadata")
-AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
+S3_BUCKET_NAME = config.s3_bucket_name
+DYNAMODB_TABLE_NAME = config.dynamodb_table_name
+AWS_REGION = config.aws_region
 
 
 # Initialize services using Streamlit's caching for efficiency
