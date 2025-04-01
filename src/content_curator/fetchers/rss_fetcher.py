@@ -4,44 +4,38 @@ from typing import Any, Dict, List, Optional
 import feedparser
 
 from src.content_curator.fetchers.fetcher_base import Fetcher
+from src.content_curator.fetchers.fetcher_utils import get_urls_for_fetch
 from src.content_curator.utils import generate_guid_for_rss_entry
 
 
 class RssFetcher(Fetcher):
     """Fetcher implementation for RSS and Atom feeds."""
 
-    def __init__(self, url_file_path: str, max_items: Optional[int] = None):
+    def __init__(
+        self,
+        url_file_path: Optional[str] = None,
+        max_items: Optional[int] = None,
+        specific_url: Optional[str] = None,
+    ):
         """
         Initializes the RSS Fetcher.
 
         Args:
             url_file_path: Path to the text file containing RSS feed URLs (one per line).
             max_items: Maximum number of most recent items to fetch per feed. If None, fetch all items.
+            specific_url: Optional specific URL to fetch, overrides url_file_path if provided.
         """
-        super().__init__(source_identifier=url_file_path)  # Use file path as identifier
+        source_identifier = (
+            specific_url if specific_url else url_file_path or "direct_url"
+        )
+        super().__init__(source_identifier=source_identifier)
         self.url_file_path = url_file_path
+        self.specific_url = specific_url
         self.max_items = max_items
 
     def _read_urls_from_file(self) -> List[str]:
-        """Reads feed URLs from the specified text file."""
-        urls = []
-        try:
-            with open(self.url_file_path, "r", encoding="utf-8") as f:
-                for line in f:
-                    url = line.strip()
-                    # Skip empty lines and lines starting with # (comments)
-                    if url and not url.startswith("#"):
-                        urls.append(url)
-            self.logger.info(f"Read {len(urls)} URLs from {self.url_file_path}")
-            return urls
-        except FileNotFoundError:
-            self.logger.error(f"URL file not found: {self.url_file_path}")
-            return []
-        except Exception as e:
-            self.logger.error(
-                f"Error reading URL file {self.url_file_path}: {e}", exc_info=True
-            )
-            return []
+        """Gets URLs either from file or from specific_url parameter."""
+        return get_urls_for_fetch(self.url_file_path, self.specific_url)
 
     def _extract_html_content(self, entry: feedparser.FeedParserDict) -> Optional[str]:
         """
@@ -73,7 +67,7 @@ class RssFetcher(Fetcher):
 
     def fetch_items(self) -> List[Dict[str, Any]]:
         """
-        Fetches items from all RSS feeds listed in the file.
+        Fetches items from all RSS feeds listed in the file or from specific_url.
         """
         feed_urls = self._read_urls_from_file()
         all_items = []
@@ -168,3 +162,13 @@ class RssFetcher(Fetcher):
             f"Finished processing feeds. Total items fetched: {len(all_items)}"
         )
         return all_items
+
+
+if __name__ == "__main__":
+    # Test the RSS Fetcher
+    # uv run python -m src.content_curator.fetchers.rss_fetcher
+    # fetcher = RssFetcher(url_file_path="data/rss_urls.txt", max_items=5)
+    # items = fetcher.fetch_items()
+
+    fetcher = RssFetcher(specific_url="https://www.lesswrong.com/feed.xml")
+    items = fetcher.fetch_items()
