@@ -9,6 +9,7 @@ https://newsletter.languagemodels.co/feed
 https://www.lesswrong.com/feed.xml?view=curated-rss
 https://www.lesswrong.com/feed.xml?view=community-rss&karmaThreshold=75
 https://www.dwarkesh.com/feed
+https://rss.app/feeds/PJYJGjmjGjoqYz2n.xml
 
 # Add URLs for testing different content types if possible
 # https://hnrss.org/newest # Hacker News - often has description only
