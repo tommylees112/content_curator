@@ -35,7 +35,7 @@ summarizer:
 # Curator Configuration
 # Settings for the content curation process
 curator:
-  default_most_recent: 10  # Default number of most recent items to include in newsletters
+  default_most_recent: 15  # Default number of most recent items to include in newsletters
   content_summary_types: ["brief", "standard"]  # Types of summaries to include in newsletters
 
 # Distributor Configuration

@@ -9,7 +9,37 @@ https://newsletter.languagemodels.co/feed
 https://www.lesswrong.com/feed.xml?view=curated-rss
 https://www.lesswrong.com/feed.xml?view=community-rss&karmaThreshold=75
 https://www.dwarkesh.com/feed
-https://rss.app/feeds/PJYJGjmjGjoqYz2n.xml
+https://raw.githubusercontent.com/Olshansk/rss-feeds/refs/heads/main/feeds/feed_paulgraham.xml
+
+# Medium feeds
+# https://help.medium.com/hc/en-us/articles/214874118-Using-RSS-feeds-of-profiles-publications-and-topics#:~:text=Medium%20provides%20RSS%20feeds%20for,to%20your%20RSS%20feed%20reader
+#  https://medium.com/feed/<newsletter name>
+#  <customdomain>.com/feed
+#  https://medium.com/feed/<publication name>
+https://medium.com/feed/airbnb-engineering
+https://netflixtechblog.com/feed
+https://engineering.atspotify.com/feed/
+https://medium.com/feed/pytorch
+
+# AI Company feeds
+https://aws.amazon.com/blogs/machine-learning/feed/
+https://blogs.nvidia.com/blog/category/deep-learning/feed/
+https://blog.google/rss/
+# https://cohere.com/blog
+# DeepMind
+# Anthropic: https://www.anthropic.com/news
+https://raw.githubusercontent.com/Olshansk/rss-feeds/refs/heads/main/feeds/feed_anthropic.xml
+https://openai.com/news/rss.xml
+
+
+# MLOps companies
+https://neptune.ai/blog/feed
+# https://h2o.ai/blog/
+# https://huggingface.co/blog
+
+# ML community
+# https://wandb.ai/fully-connected
+
 
 # Add URLs for testing different content types if possible
 # https://hnrss.org/newest # Hacker News - often has description only
