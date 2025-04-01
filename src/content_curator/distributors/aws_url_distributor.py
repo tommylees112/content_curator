@@ -47,13 +47,13 @@ class AWSURLDistributor:
         logger.info(f"Initialized AWSURLDistributor for bucket: {self.bucket_name}")
 
     def distribute(
-        self, s3_key: str = "curated/latest.md", expiration: int = 3600
+        self, s3_key: str = "curated/latest_standard.md", expiration: int = 3600
     ) -> Optional[str]:
         """
         Generates a pre-signed URL for the specified S3 object and logs it.
 
         Args:
-            s3_key: The key (path) of the object in the S3 bucket. Defaults to "curated/latest.md".
+            s3_key: The key (path) of the object in the S3 bucket. Defaults to "curated/latest_standard.md".
             expiration: The time in seconds for which the pre-signed URL is valid. Defaults to 3600 (1 hour).
 
         Returns:
@@ -88,14 +88,14 @@ class AWSURLDistributor:
             return None
 
     def distribute_as_html(
-        self, s3_key: str = "curated/latest.md", expiration: int = 3600
+        self, s3_key: str = "curated/latest_standard.md", expiration: int = 3600
     ) -> Optional[str]:
         """
         Converts the Markdown content to HTML, stores it in S3, and generates a pre-signed URL.
         Uses the HTMLConverter class for the conversion.
 
         Args:
-            s3_key: The key (path) of the Markdown object in the S3 bucket. Defaults to "curated/latest.md".
+            s3_key: The key (path) of the Markdown object in the S3 bucket. Defaults to "curated/latest_standard.md".
             expiration: The time in seconds for which the pre-signed URL is valid. Defaults to 3600 (1 hour).
 
         Returns:
@@ -142,4 +142,6 @@ if __name__ == "__main__":
 
     html_url = distributor.distribute_as_html()
     if html_url:
-        logger.info("Successfully generated pre-signed URL for HTML version")
+        logger.info(
+            "Successfully generated pre-signed URL for HTML version of standard summary"
+        )

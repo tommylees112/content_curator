@@ -3,7 +3,8 @@ name: Daily Content Curation
 on:
   push:
   schedule:
-    - cron: '0 9 * * *'  # Every day at 9am UTC
+    - cron: '0 6 * * *'  # Every day at 6am UTC
+    - cron: '0 15 * * *' # Every day at 3pm UTC
   workflow_dispatch:
 
 permissions:

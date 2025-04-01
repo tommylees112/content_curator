@@ -258,12 +258,14 @@ class NewsletterCurator:
         else:
             self.logger.error("Failed to save newsletter to S3")
 
-        # Also save at a fixed location as "latest.md"
-        latest_key = "curated/latest.md"
+        # Also save at a type-specific location as "latest_{summary_type}.md"
+        latest_key = f"curated/latest_{summary_type}.md"
         if self.s3_storage.store_content(latest_key, curated_content):
-            self.logger.info(f"Newsletter saved to S3 at {latest_key} (latest version)")
+            self.logger.info(
+                f"Newsletter saved to S3 at {latest_key} (latest {summary_type} version)"
+            )
         else:
-            self.logger.error("Failed to save latest newsletter to S3")
+            self.logger.error(f"Failed to save latest {summary_type} newsletter to S3")
 
         return curated_content
 

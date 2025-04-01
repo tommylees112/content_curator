@@ -9,6 +9,7 @@ from src.content_curator.config import config
 from src.content_curator.distributors.aws_url_distributor import AWSURLDistributor
 from src.content_curator.distributors.html_converter import (
     HTMLConverter,
+    combine_markdown_files_to_html,
     convert_markdown_to_html,
 )
 from src.content_curator.storage.s3_storage import S3Storage
@@ -102,7 +103,8 @@ class EmailDistributor:
 
     def distribute(
         self,
-        s3_key: str = "curated/latest.md",
+        email_md_path: str = "curated/latest_brief.md",
+        browser_link_md_path: str = "curated/latest_standard.md",
         recipient_email: Optional[str] = None,
         subject_prefix: Optional[str] = None,
         subject: Optional[str] = None,
@@ -111,7 +113,10 @@ class EmailDistributor:
         Retrieves markdown content from S3, converts it to HTML, and sends it via email.
 
         Args:
-            s3_key: The key (path) of the object in the S3 bucket. Defaults to "curated/latest.md".
+            email_md_path: The path of the brief markdown content in S3 to use in email.
+                        Defaults to "curated/latest_brief.md".
+            browser_link_md_path: The path of the standard markdown content in S3 to use
+                        for the browser view. Defaults to "curated/latest_standard.md".
             recipient_email: Email to send to. If None, will use the configured default.
             subject_prefix: Prefix for the subject line. If None, will use the configured prefix.
             subject: Custom subject line. If None, will use the file name.
@@ -127,27 +132,27 @@ class EmailDistributor:
                 return False
 
             # Check if the object exists
-            if not self.s3_storage.object_exists(s3_key):
+            if not self.s3_storage.object_exists(email_md_path):
                 logger.warning(
-                    f"Object s3://{self.bucket_name}/{s3_key} does not exist."
+                    f"Object s3://{self.bucket_name}/{email_md_path} does not exist."
                 )
                 return False
 
             # Get the markdown content
-            markdown_content = self.s3_storage.get_content(s3_key)
+            markdown_content = self.s3_storage.get_content(email_md_path)
             if not markdown_content:
                 logger.warning(
-                    f"Could not retrieve content from s3://{self.bucket_name}/{s3_key}."
+                    f"Could not retrieve content from s3://{self.bucket_name}/{email_md_path}."
                 )
                 return False
 
             # Convert the markdown to HTML
             html_content = convert_markdown_to_html(markdown_content)
 
-            # Generate browser view URL with HTML version instead of markdown
-            browser_url = self.url_distributor.distribute_as_html(s3_key)
+            # Generate browser view URL for the standard version
+            browser_url = self.url_distributor.distribute_as_html(browser_link_md_path)
             if browser_url:
-                browser_link = f'<div style="margin-bottom: 20px; padding: 10px; background-color: #f0f0f0; border-radius: 5px;"><a href="{browser_url}">Follow link to view in browser</a></div>'
+                browser_link = f'<div style="margin-bottom: 20px; padding: 10px; background-color: #f0f0f0; border-radius: 5px;"><a href="{browser_url}">Follow link to view detailed version in browser</a></div>'
                 # Insert the browser link at the beginning of the HTML body
                 if "<body>" in html_content:
                     html_content = html_content.replace(
@@ -155,13 +160,15 @@ class EmailDistributor:
                     )
                 else:
                     html_content = f"{browser_link}\n{html_content}"
-                logger.info("Added HTML browser view link to email content")
+                logger.info(
+                    "Added HTML browser view link to detailed version in email content"
+                )
 
             # Create email subject
             subject_prefix = subject_prefix or config.email_subject_prefix
             if not subject:
                 # Extract file name from S3 key
-                file_name = s3_key.split("/")[-1]
+                file_name = email_md_path.split("/")[-1]
                 subject = f"{subject_prefix}Content Update: {file_name}"
             elif subject_prefix:
                 subject = f"{subject_prefix}{subject}"
@@ -177,7 +184,8 @@ class EmailDistributor:
 
     def distribute_multiple(
         self,
-        s3_keys: List[str],
+        email_md_paths: List[str],
+        browser_link_md_path: str = "curated/latest_standard.md",
         recipient_email: Optional[str] = None,
         subject_prefix: Optional[str] = None,
         subject: Optional[str] = None,
@@ -186,7 +194,9 @@ class EmailDistributor:
         Combines multiple markdown files from S3, converts them to HTML, and sends via email.
 
         Args:
-            s3_keys: List of S3 object keys to include in the email.
+            email_md_paths: List of S3 paths for markdown files to include in the email.
+            browser_link_md_path: The path of the standard markdown content in S3 to use
+                        for the browser view. Defaults to "curated/latest_standard.md".
             recipient_email: Email to send to. If None, will use the configured default.
             subject_prefix: Prefix for the subject line. If None, will use the configured prefix.
             subject: Custom subject line. If None, will use a generic title.
@@ -201,9 +211,11 @@ class EmailDistributor:
                 logger.error("No recipient email provided and no default configured.")
                 return False
 
-            # Create combined HTML content
-            combined_html_content = ""
-            for s3_key in s3_keys:
+            # Get markdown contents and file names
+            markdown_contents = []
+            file_names = []
+
+            for s3_key in email_md_paths:
                 # Check if the object exists
                 if not self.s3_storage.object_exists(s3_key):
                     logger.warning(
@@ -219,48 +231,25 @@ class EmailDistributor:
                     )
                     continue
 
-                # Convert the markdown to HTML and add to combined content
-                html_content = convert_markdown_to_html(markdown_content)
-                # Extract just the body content
-                body_content = html_content.split("<body>")[1].split("</body>")[0]
-                combined_html_content += (
-                    f"<h2>{s3_key.split('/')[-1]}</h2>\n{body_content}\n<hr>\n"
-                )
+                # Add to the lists
+                markdown_contents.append(markdown_content)
+                file_names.append(s3_key.split("/")[-1])
 
-            if not combined_html_content:
+            if not markdown_contents:
                 logger.error("No content was retrieved to send via email.")
                 return False
 
-            # Generate browser view URL for the first item (as a representative)
-            browser_url = None
-            if s3_keys:
-                browser_url = self.url_distributor.distribute_as_html(s3_keys[0])
-
-            browser_link = ""
+            # Generate browser view URL for the standard version
+            browser_url = self.url_distributor.distribute_as_html(browser_link_md_path)
             if browser_url:
-                browser_link = f'<div style="margin-bottom: 20px; padding: 10px; background-color: #f0f0f0; border-radius: 5px;"><a href="{browser_url}">Follow link to view in browser</a></div>'
-                logger.info("Added HTML browser view link to email content")
+                logger.info(
+                    "Added HTML browser view link to detailed version in email content"
+                )
 
-            # Create full HTML document
-            full_html = f"""<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Content Curator</title>
-    <style>
-        body {{ font-family: sans-serif; line-height: 1.6; max-width: 800px; margin: 0 auto; padding: 20px; }}
-        a {{ color: #0366d6; text-decoration: underline; cursor: pointer; }}
-        a:hover {{ color: #044289; text-decoration: underline; }}
-        pre {{ background-color: #f6f8fa; padding: 16px; overflow: auto; }}
-        blockquote {{ border-left: 4px solid #dfe2e5; padding: 0 1em; color: #6a737d; margin: 0; }}
-    </style>
-</head>
-<body>
-    {browser_link}
-    {combined_html_content}
-</body>
-</html>"""
+            # Create full HTML document using the new function from html_converter
+            full_html = combine_markdown_files_to_html(
+                markdown_contents, file_names, browser_url
+            )
 
             # Create email subject
             subject_prefix = subject_prefix or config.email_subject_prefix
@@ -339,6 +328,11 @@ if __name__ == "__main__":
     distributor = EmailDistributor(s3_storage=s3_storage)
 
     # Example usage
-    success = distributor.distribute("curated/latest.md")
+    success = distributor.distribute(
+        email_md_path="curated/latest_brief.md",
+        browser_link_md_path="curated/latest_standard.md",
+    )
     if success:
-        logger.info("Successfully sent email with latest content")
+        logger.info(
+            "Successfully sent email with latest brief content and link to standard content"
+        )

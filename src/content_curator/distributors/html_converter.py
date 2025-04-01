@@ -201,3 +201,66 @@ class HTMLConverter:
             return markdown_key[:-3] + ".html"
         else:
             return markdown_key + ".html"
+
+
+def combine_markdown_files_to_html(
+    markdown_contents: list, file_names: list, browser_url: Optional[str] = None
+) -> str:
+    """
+    Combines multiple markdown contents into a single HTML document.
+
+    Args:
+        markdown_contents: List of markdown content strings to combine.
+        file_names: List of file names corresponding to each markdown content.
+        browser_url: Optional URL to add as a browser view link.
+
+    Returns:
+        A single HTML document containing all the converted markdown contents.
+    """
+    combined_html_content = ""
+
+    # Process each markdown content
+    for i, markdown_content in enumerate(markdown_contents):
+        if not markdown_content:
+            continue
+
+        # Convert markdown to HTML
+        html_content = convert_markdown_to_html(markdown_content)
+
+        # Extract just the body content
+        if "<body>" in html_content and "</body>" in html_content:
+            body_content = html_content.split("<body>")[1].split("</body>")[0]
+        else:
+            body_content = html_content
+
+        # Add file name as header and the content
+        file_name = file_names[i] if i < len(file_names) else f"Document {i + 1}"
+        combined_html_content += f"<h2>{file_name}</h2>\n{body_content}\n<hr>\n"
+
+    # Create browser link if URL is provided
+    browser_link = ""
+    if browser_url:
+        browser_link = f'<div style="margin-bottom: 20px; padding: 10px; background-color: #f0f0f0; border-radius: 5px;"><a href="{browser_url}">Follow link to view in browser</a></div>'
+
+    # Create full HTML document
+    full_html = f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Content Curator</title>
+    <style>
+        body {{ font-family: sans-serif; line-height: 1.6; max-width: 800px; margin: 0 auto; padding: 20px; }}
+        a {{ color: #0366d6; text-decoration: underline; cursor: pointer; }}
+        a:hover {{ color: #044289; text-decoration: underline; }}
+        pre {{ background-color: #f6f8fa; padding: 16px; overflow: auto; }}
+        blockquote {{ border-left: 4px solid #dfe2e5; padding: 0 1em; color: #6a737d; margin: 0; }}
+    </style>
+</head>
+<body>
+    {browser_link}
+    {combined_html_content}
+</body>
+</html>"""
+
+    return full_html

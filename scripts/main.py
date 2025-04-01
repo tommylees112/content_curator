@@ -115,10 +115,16 @@ def parse_arguments():
         help="Email address to send the newsletter to. Defaults to the configured default_recipient.",
     )
     parser.add_argument(
-        "--s3_key",
+        "--email_md_path",
         type=str,
-        default="curated/latest.md",
-        help="S3 key of the newsletter to distribute. Defaults to 'curated/latest.md'.",
+        default="curated/latest_brief.md",
+        help="S3 path of the brief markdown content to use in email. Defaults to 'curated/latest_brief.md'.",
+    )
+    parser.add_argument(
+        "--browser_link_md_path",
+        type=str,
+        default="curated/latest_standard.md",
+        help="S3 path of the standard markdown content for browser view. Defaults to 'curated/latest_standard.md'.",
     )
 
     # Parse the arguments
@@ -378,7 +384,8 @@ def save_last_item(processed_items: List[ContentItem], summarize_flag: bool):
 def run_distribute_stage(
     state_manager: DynamoDBState,
     s3_storage: S3Storage,
-    s3_key: str = "curated/latest.md",
+    email_md_path: str = "curated/latest_brief.md",
+    browser_link_md_path: str = "curated/latest_standard.md",
     recipient_email: Optional[str] = None,
 ) -> bool:
     """Run the distribution stage to send newsletters via email.
@@ -386,7 +393,8 @@ def run_distribute_stage(
     Args:
         state_manager: DynamoDB state manager
         s3_storage: S3 storage manager
-        s3_key: The S3 key of the newsletter to distribute
+        email_md_path: The S3 path of the brief markdown content to use in email
+        browser_link_md_path: The S3 path of the standard markdown content for browser view
         recipient_email: Email address to send to (uses configured default if None)
 
     Returns:
@@ -399,7 +407,8 @@ def run_distribute_stage(
 
     # Send the email
     return distributor.distribute(
-        s3_key=s3_key,
+        email_md_path=email_md_path,
+        browser_link_md_path=browser_link_md_path,
         recipient_email=recipient_email,
     )
 
@@ -530,7 +539,8 @@ def main():
         success = run_distribute_stage(
             state_manager,
             s3_storage,
-            s3_key=args.s3_key,
+            email_md_path=args.email_md_path,
+            browser_link_md_path=args.browser_link_md_path,
             recipient_email=args.recipient_email,
         )
         if success:

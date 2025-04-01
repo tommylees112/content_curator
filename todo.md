@@ -22,22 +22,11 @@
 - [x] Make configuration more centralized, moving hardcoded values into a config file
 - [x] rename RssFetcher to RSSFetcher
 - [x] Create a distributor class that will take in a list of content items and distribute them to the appropriate channels. how to do this in an extensible way (slack, email, whatsapp, html, etc.).
+- [x] deploy this and have it run daily on github actions
 
 ## TODO
 - [ ] from the AWSURLDistributor create a view into the LONGER summaries of the curated content so the user can click through and see the full summaries.
-- [ ]
-what do i need to do in order to deploy this and have it run daily on github actions? 
-
-I want to use uv to install the dependencies
-
-I want to run the different parts of the pipeline separately
-
-1. fetch
-2. process
-3. summarize
-4. curate
-5. distribute
-
+- [ ] codebase follows the dependency injection pattern partially by passing s3_storage and state_manager as parameters rather than importing them globally. Consider extending this pattern to configuration values as well for better maintainability as the application grows.
 - [ ] Add comprehensive unit tests for the ContentItem implementation
 - [ ] Add docstrings explaining the purpose and lifecycle of ContentItem fields
 - [ ] Prepare for potential serverless architecture:

@@ -140,11 +140,11 @@ The system uses AWS for storage:
 2. Set up a Python 3.9+ environment
 3. Install dependencies:
    ```bash
-   pip install -e .
+   uv sync
    ```
    For development:
    ```bash
-   pip install -e ".[dev]"
+   uv run pip install -e ".[dev]"
    ```
 
 ## Infrastructure Setup
