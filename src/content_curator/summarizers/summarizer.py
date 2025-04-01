@@ -10,6 +10,8 @@ from langchain_openai import ChatOpenAI
 from loguru import logger
 
 from src.content_curator.models import ContentItem
+from src.content_curator.storage.dynamodb_state import DynamoDBState
+from src.content_curator.storage.s3_storage import S3Storage
 
 # Define prompt types
 SummaryType = Literal["standard", "brief"]
@@ -28,6 +30,8 @@ class Summarizer:
         model_name: ModelName = "gemini-1.5-flash",
         temperature: float = 0.0,
         max_output_tokens: Optional[int] = None,
+        s3_storage: Optional[S3Storage] = None,
+        state_manager: Optional[DynamoDBState] = None,
     ):
         """
         Initialize the summarizer with a language model and load prompts from files.
@@ -36,9 +40,13 @@ class Summarizer:
             model_name: The name of the LLM to use for summarization
             temperature: Temperature setting for the LLM (0.0 for most deterministic output)
             max_output_tokens: Maximum number of tokens to allow for the model's output
+            s3_storage: Optional S3Storage instance for retrieving and storing content
+            state_manager: Optional DynamoDBState instance for updating item state
         """
         self.logger = logger
         self.model_name = model_name
+        self.s3_storage = s3_storage
+        self.state_manager = state_manager
         self.prompt_templates: Dict[str, str] = {}
 
         # Load prompts from files
@@ -204,10 +212,6 @@ class Summarizer:
                     f"Generated brief summary for item '{item.title}' ({item.guid})"
                 )
 
-            # If this is a standard summary, mark the item as summarized
-            if summary_type == "standard":
-                item.is_summarized = True
-
         return item
 
     def batch_summarize(
@@ -251,6 +255,157 @@ class Summarizer:
 
         self.logger.info(f"Generated both summary types for {len(items)} items")
         return items
+
+    def summarize_and_update_state(
+        self,
+        items_to_summarize: List[ContentItem],
+        overwrite_flag: bool = False,
+    ) -> List[ContentItem]:
+        """
+        Summarize a list of content items and update their state in S3 and DynamoDB.
+        This method encapsulates the entire summarize stage logic.
+
+        Args:
+            items_to_summarize: List of ContentItem objects to summarize
+            overwrite_flag: Whether to summarize items that are already summarized
+
+        Returns:
+            List of summarized ContentItem objects
+        """
+        if not self.s3_storage or not self.state_manager:
+            self.logger.error(
+                "S3Storage and DynamoDBState are required for summarize_and_update_state"
+            )
+            return []
+
+        summarized_items = []
+        items_successfully_summarized = 0
+        skipped_already_summarized = 0
+        skipped_not_worth_summarizing = 0
+        skipped_no_markdown = 0
+        skipped_existing_summary = 0
+
+        for item in items_to_summarize:
+            # Check if summaries already exist
+            has_standard_summary = bool(item.summary_path)
+            has_brief_summary = bool(item.short_summary_path)
+
+            if has_standard_summary or has_brief_summary:
+                if has_standard_summary:
+                    if overwrite_flag:
+                        self.logger.debug(
+                            f"Item {item.guid} already has standard summary at {item.summary_path}, will be overwritten (overwrite flag is enabled)"
+                        )
+                    else:
+                        self.logger.debug(
+                            f"Item {item.guid} already has standard summary at {item.summary_path}, will be preserved"
+                        )
+                        skipped_existing_summary += 1
+
+                if has_brief_summary:
+                    if overwrite_flag:
+                        self.logger.debug(
+                            f"Item {item.guid} already has brief summary at {item.short_summary_path}, will be overwritten (overwrite flag is enabled)"
+                        )
+                    else:
+                        self.logger.debug(
+                            f"Item {item.guid} already has brief summary at {item.short_summary_path}, will be preserved"
+                        )
+                        # We don't increment the counter again as it's likely both summaries exist or don't
+
+            # Skip already summarized items unless overwrite is enabled
+            # Consider item summarized if standard summary exists
+            if item.summary_path and not overwrite_flag:
+                self.logger.debug(
+                    f"Item '{item.title}' ({item.guid}) already summarized (has summary_path), skipping..."
+                )
+                summarized_items.append(item)
+                skipped_already_summarized += 1
+                continue
+
+            # Fetch markdown content from S3 if not already loaded
+            if not item.markdown_content and item.md_path:
+                markdown_content = self.s3_storage.get_content(item.md_path)
+                if markdown_content:
+                    item.markdown_content = markdown_content
+                else:
+                    self.logger.debug(
+                        f"Could not retrieve markdown content for {item.guid}"
+                    )
+                    skipped_no_markdown += 1
+                    continue
+
+            # Check if this item should be summarized
+            if item.to_be_summarized is None and item.markdown_content:
+                from src.content_curator.processors.markdown_processor import (
+                    MarkdownProcessor,
+                )
+
+                processor = MarkdownProcessor()
+                item.to_be_summarized = processor.is_worth_summarizing(
+                    item.markdown_content
+                )
+
+                # If the item is determined not to be worth summarizing, update it
+                if not item.to_be_summarized:
+                    item.is_paywall = processor.is_paywall_or_teaser(
+                        item.markdown_content
+                    )
+                    self.state_manager.update_item(item)
+
+            # Skip items not worth summarizing
+            if not item.to_be_summarized:
+                self.logger.debug(
+                    f"Item '{item.title}' ({item.guid}) marked as not worth summarizing, skipping..."
+                )
+                summarized_items.append(item)
+                skipped_not_worth_summarizing += 1
+                continue
+
+            # Generate summaries for this item (standard and brief)
+            item = self.summarize_item(item, summary_type="standard")
+            item = self.summarize_item(item, summary_type="brief")
+
+            # Store summaries in S3
+            if item.summary and item.summary_path:
+                self.s3_storage.store_content(item.summary_path, item.summary)
+
+            if item.short_summary and item.short_summary_path:
+                self.s3_storage.store_content(
+                    item.short_summary_path, item.short_summary
+                )
+
+            # Update the item in DynamoDB
+            self.state_manager.update_item(item)
+            self.logger.debug(
+                f"Updated item '{item.title}' ({item.guid}): stored summaries"
+            )
+
+            summarized_items.append(item)
+            items_successfully_summarized += 1
+
+        # Log summary stats
+        total_skipped = (
+            skipped_already_summarized
+            + skipped_not_worth_summarizing
+            + skipped_no_markdown
+            + skipped_existing_summary
+        )
+        if total_skipped > 0:
+            self.logger.warning(
+                f"Skipped summarizing {total_skipped} items: "
+                f"{skipped_already_summarized} already summarized, "
+                f"{skipped_existing_summary} with existing summaries, "
+                f"{skipped_not_worth_summarizing} not worth summarizing, "
+                f"{skipped_no_markdown} missing markdown"
+            )
+
+        # Log final summary
+        self.logger.info(
+            f"Summarization summary: {items_successfully_summarized} items summarized, {total_skipped} items skipped"
+        )
+
+        return summarized_items
 
 
 if __name__ == "__main__":

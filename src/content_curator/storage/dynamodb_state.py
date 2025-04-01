@@ -224,26 +224,25 @@ class DynamoDBState:
             self.logger.error(f"Error getting items needing processing: {e}")
             return []
 
-    def get_items_by_status_flags(
+    def get_items_by_status_paths(
         self,
-        is_fetched: bool = None,
-        is_processed: bool = None,
-        is_summarized: bool = None,
-        is_distributed: bool = None,
+        html_path_exists: Optional[bool] = None,
+        md_path_exists: Optional[bool] = None,
+        summary_path_exists: Optional[bool] = None,
+        has_newsletters: Optional[bool] = None,
         limit: int = 100,
-        as_content_items: bool = True,  # Changed default to True
+        as_content_items: bool = True,
     ) -> Union[List[Dict[str, Any]], List[ContentItem]]:
         """
-        Get items based on their processing status flags.
+        Get items based on their processing status paths.
 
         Args:
-            is_fetched: Filter for fetched status
-            is_processed: Filter for processed status
-            is_summarized: Filter for summarized status
-            is_distributed: Filter for distributed status
+            html_path_exists: Filter for items with html_path
+            md_path_exists: Filter for items with md_path
+            summary_path_exists: Filter for items with summary_path
+            has_newsletters: Filter for items with non-empty newsletters list
             limit: Maximum number of items to return
             as_content_items: If True, return as ContentItem objects instead of dictionaries
-                             (Default is now True to encourage use of ContentItem objects)
 
         Returns:
             List of matching items as ContentItem objects (or dictionaries if as_content_items=False)
@@ -252,14 +251,21 @@ class DynamoDBState:
             # Build the filter expression based on provided flags
             filter_expression = None
 
-            if is_fetched is not None:
-                filter_expression = boto3.dynamodb.conditions.Attr("is_fetched").eq(
-                    is_fetched
-                )
+            if html_path_exists is not None:
+                if html_path_exists:
+                    filter_expression = boto3.dynamodb.conditions.Attr(
+                        "html_path"
+                    ).exists()
+                else:
+                    filter_expression = ~boto3.dynamodb.conditions.Attr(
+                        "html_path"
+                    ).exists()
 
-            if is_processed is not None:
-                new_condition = boto3.dynamodb.conditions.Attr("is_processed").eq(
-                    is_processed
+            if md_path_exists is not None:
+                new_condition = (
+                    boto3.dynamodb.conditions.Attr("md_path").exists()
+                    if md_path_exists
+                    else ~boto3.dynamodb.conditions.Attr("md_path").exists()
                 )
                 filter_expression = (
                     new_condition
@@ -267,9 +273,11 @@ class DynamoDBState:
                     else filter_expression & new_condition
                 )
 
-            if is_summarized is not None:
-                new_condition = boto3.dynamodb.conditions.Attr("is_summarized").eq(
-                    is_summarized
+            if summary_path_exists is not None:
+                new_condition = (
+                    boto3.dynamodb.conditions.Attr("summary_path").exists()
+                    if summary_path_exists
+                    else ~boto3.dynamodb.conditions.Attr("summary_path").exists()
                 )
                 filter_expression = (
                     new_condition
@@ -277,10 +285,24 @@ class DynamoDBState:
                     else filter_expression & new_condition
                 )
 
-            if is_distributed is not None:
-                new_condition = boto3.dynamodb.conditions.Attr("is_distributed").eq(
-                    is_distributed
-                )
+            if has_newsletters is not None:
+                if has_newsletters:
+                    # Check if newsletters exists and is not empty
+                    new_condition = boto3.dynamodb.conditions.Attr(
+                        "newsletters"
+                    ).exists() & boto3.dynamodb.conditions.Attr(
+                        "newsletters"
+                    ).size().gt(0)
+                else:
+                    # Check if newsletters doesn't exist or is empty
+                    not_exists = ~boto3.dynamodb.conditions.Attr("newsletters").exists()
+                    exists_but_empty = boto3.dynamodb.conditions.Attr(
+                        "newsletters"
+                    ).exists() & boto3.dynamodb.conditions.Attr(
+                        "newsletters"
+                    ).size().eq(0)
+                    new_condition = not_exists | exists_but_empty
+
                 filter_expression = (
                     new_condition
                     if filter_expression is None
@@ -305,8 +327,156 @@ class DynamoDBState:
             return items
 
         except Exception as e:
-            self.logger.error(f"Error getting items by status flags: {e}")
+            self.logger.error(f"Error getting items by status paths: {e}")
             return []
+
+    def get_items_for_stage(
+        self,
+        stage: Literal["process", "summarize", "curate"],
+        specific_id: Optional[str] = None,
+        overwrite_flag: bool = False,
+        limit: int = 100,
+    ) -> List[ContentItem]:
+        """
+        Get items that need to be processed for a specific stage.
+        This method encapsulates the common logic for determining which items to retrieve.
+
+        Args:
+            stage: The pipeline stage ("process", "summarize", or "curate")
+            specific_id: Optional ID of a specific item to retrieve
+            overwrite_flag: Whether to include items that have already been processed by this stage
+            limit: Maximum number of items to return
+
+        Returns:
+            List of ContentItem objects suitable for the specified stage
+        """
+        # Handle specific_id case first
+        if specific_id:
+            item = self.get_item(specific_id)
+            if item:
+                return [item]
+            else:
+                self.logger.warning(f"No item found with ID: {specific_id}")
+                return []
+
+        # Define criteria based on stage
+        if stage == "process":
+            if overwrite_flag:
+                # Get all items with HTML content
+                return self.get_items_by_status_paths(
+                    html_path_exists=True, as_content_items=True, limit=limit
+                )
+            else:
+                # Get items with HTML content but no markdown
+                return self.get_items_by_status_paths(
+                    html_path_exists=True,
+                    md_path_exists=False,
+                    as_content_items=True,
+                    limit=limit,
+                )
+        elif stage == "summarize":
+            if overwrite_flag:
+                # Get all processed items regardless of summarization status
+                return self.get_items_by_status_paths(
+                    md_path_exists=True, as_content_items=True, limit=limit
+                )
+            else:
+                # Get only items that need summarization (processed but not summarized)
+                return self.get_items_by_status_paths(
+                    md_path_exists=True,
+                    summary_path_exists=False,
+                    as_content_items=True,
+                    limit=limit,
+                )
+        elif stage == "curate":
+            # For curation, we want all summarized items
+            return self.get_items_by_status_paths(
+                summary_path_exists=True, as_content_items=True, limit=limit
+            )
+        else:
+            self.logger.error(f"Invalid stage: {stage}")
+            return []
+
+    def get_items_needing_summarization(
+        self, limit: int = 10, as_content_items: bool = True
+    ) -> Union[List[Dict[str, Any]], List[ContentItem]]:
+        """
+        Get items that need summarization (processed, worth summarizing, not summarized yet).
+
+        Args:
+            limit: Maximum number of items to return
+            as_content_items: If True, return results as ContentItem objects
+
+        Returns:
+            List of items that need summarization
+        """
+        try:
+            # Build filter expression for:
+            # 1. Items that have md_path (processed)
+            # 2. Items that don't have summary_path (not summarized)
+            # 3. Items that are worth summarizing (to_be_summarized = True)
+            filter_expression = boto3.dynamodb.conditions.Attr("md_path").exists()
+            filter_expression = (
+                filter_expression
+                & ~boto3.dynamodb.conditions.Attr("summary_path").exists()
+            )
+
+            # Only include items explicitly marked as worth summarizing
+            # or items that haven't been evaluated yet (to_be_summarized is null)
+            worth_summarizing_condition = boto3.dynamodb.conditions.Attr(
+                "to_be_summarized"
+            ).eq(True)
+            not_evaluated_condition = boto3.dynamodb.conditions.Attr(
+                "to_be_summarized"
+            ).not_exists()
+            worth_condition = worth_summarizing_condition | not_evaluated_condition
+
+            filter_expression = filter_expression & worth_condition
+
+            # Execute scan with the filter
+            response = self.table.scan(
+                FilterExpression=filter_expression,
+                Limit=limit,
+            )
+
+            items = response.get("Items", [])
+            self.logger.info(f"Found {len(items)} items that need summarization")
+
+            # Convert to ContentItem objects if requested
+            if as_content_items and items:
+                return [ContentItem.from_dict(item) for item in items]
+
+            return items
+
+        except Exception as e:
+            self.logger.error(f"Error getting items needing summarization: {e}")
+            return []
+
+    def update_item(self, item: ContentItem) -> bool:
+        """
+        Update an item in DynamoDB with the current state of a ContentItem.
+
+        Args:
+            item: The ContentItem to update
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            # Always update the last_updated timestamp
+            item.last_updated = datetime.now().isoformat()
+
+            # Convert ContentItem to dictionary for DynamoDB
+            item_dict = item.to_dict()
+
+            # Remove the guid from the updates as it's the key
+            guid = item_dict.pop("guid")
+
+            # Update the item using the existing update_metadata method
+            return self.update_metadata(guid, item_dict)
+        except Exception as e:
+            self.logger.error(f"Error updating item {item.guid}: {e}")
+            return False
 
     def update_metadata(self, guid: str, updates: Dict[str, Any]) -> bool:
         """
@@ -412,83 +582,3 @@ class DynamoDBState:
         except Exception as e:
             self.logger.error(f"Error retrieving all items: {e}")
             return []
-
-    def get_items_needing_summarization(
-        self, limit: int = 10, as_content_items: bool = True
-    ) -> Union[List[Dict[str, Any]], List[ContentItem]]:
-        """
-        Get items that need summarization (processed, worth summarizing, not summarized yet).
-
-        Args:
-            limit: Maximum number of items to return
-            as_content_items: If True, return results as ContentItem objects
-
-        Returns:
-            List of items that need summarization
-        """
-        try:
-            # Build filter expression for:
-            # 1. Items that are processed
-            # 2. Items that are not summarized
-            # 3. Items that are worth summarizing (to_be_summarized = True)
-            filter_expression = boto3.dynamodb.conditions.Attr("is_processed").eq(True)
-            filter_expression = filter_expression & boto3.dynamodb.conditions.Attr(
-                "is_summarized"
-            ).eq(False)
-
-            # Only include items explicitly marked as worth summarizing
-            # or items that haven't been evaluated yet (to_be_summarized is null)
-            worth_summarizing_condition = boto3.dynamodb.conditions.Attr(
-                "to_be_summarized"
-            ).eq(True)
-            not_evaluated_condition = boto3.dynamodb.conditions.Attr(
-                "to_be_summarized"
-            ).not_exists()
-            worth_condition = worth_summarizing_condition | not_evaluated_condition
-
-            filter_expression = filter_expression & worth_condition
-
-            # Execute scan with the filter
-            response = self.table.scan(
-                FilterExpression=filter_expression,
-                Limit=limit,
-            )
-
-            items = response.get("Items", [])
-            self.logger.info(f"Found {len(items)} items that need summarization")
-
-            # Convert to ContentItem objects if requested
-            if as_content_items and items:
-                return [ContentItem.from_dict(item) for item in items]
-
-            return items
-
-        except Exception as e:
-            self.logger.error(f"Error getting items needing summarization: {e}")
-            return []
-
-    def update_item(self, item: ContentItem) -> bool:
-        """
-        Update an item in DynamoDB with the current state of a ContentItem.
-
-        Args:
-            item: The ContentItem to update
-
-        Returns:
-            True if successful, False otherwise
-        """
-        try:
-            # Always update the last_updated timestamp
-            item.last_updated = datetime.now().isoformat()
-
-            # Convert ContentItem to dictionary for DynamoDB
-            item_dict = item.to_dict()
-
-            # Remove the guid from the updates as it's the key
-            guid = item_dict.pop("guid")
-
-            # Update the item using the existing update_metadata method
-            return self.update_metadata(guid, item_dict)
-        except Exception as e:
-            self.logger.error(f"Error updating item {item.guid}: {e}")
-            return False

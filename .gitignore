@@ -57,3 +57,4 @@ terraform/.terraform.lock.hcl
 # credentinals and token secrets
 credentials.json
 token.json
+*.log

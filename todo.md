@@ -12,10 +12,10 @@
 - [x] Updated scripts to use ContentItem objects (`update_guids.py`, `fix_summary_metadata.py`)
 - [x] Updated examples to use ContentItem objects (`summarization_process.py`)
 - [x] Added `get_items_needing_summarization` method to DynamoDBState to get items that need summarization
+- [x] ensure that the fetcher stores the html that is collected in the s3 storage.create a new html_path field in the ContentItem dataclass and column in the dynamodb table. Also rename / update the s3_path to be md_path.
+- [x] Clean up original dictionary-based methods after fully validating the ContentItem implementation
 
 ## TODO
-- [ ] ensure that the fetcher stores the html that is collected in the s3 storage.create a new html_path field in the ContentItem dataclass and column in the dynamodb table. Also rename / update the s3_path to be md_path.
-- [x] Clean up original dictionary-based methods after fully validating the ContentItem implementation
 - [ ] Add comprehensive unit tests for the ContentItem implementation
 - [ ] Add docstrings explaining the purpose and lifecycle of ContentItem fields
 - [ ] Consider refactoring the pipeline to make each stage more independent:
@@ -27,11 +27,17 @@
   - [ ] Implement serverless function entry points for each stage
   - [ ] Set up infrastructure as code (e.g., AWS SAM or Serverless Framework config)
 - [ ] Improve error handling with specific exception types and retry logic
+- [ ] refactor the ContentItem and its uses throughout the pipeline to simply look for summary_path and short_summary_path instead of having the boolean flags: is_fetched, is_processed, is_summarized, is_distributed. Processes that use these  should just look at the paths. in all of the fetchers, processors, summarizers and curators. Remove references to the boolean flags. Do not give warnings or deprecations, just make the changes.
+- [ ] Only run the short summary stage by default. We can do the full summary in two ways 1) run when the user asks for it 2) run when that item is part of a newsletter / curated into the newsletter. Come up with designs and ways of doing this that maintain the separation of concerns between stages.
+- [ ] separation of concernns means that the differnet components do not rely on each other but only on ContentItem, DynamoDBState, S3Storage
 
 ## Architecture Notes
 - Each stage of the pipeline uses the same ContentItem dataclass, with different fields populated at each stage
 - Storage classes (`DynamoDBState`, `S3Storage`) handle serialization/deserialization between ContentItem objects and database/object storage
 - Each pipeline component should focus on its core responsibility, with minimal knowledge of other components' implementation details
+
+1. **Refactor Item Loading Logic**: There's significant overlap in the logic at the beginning of `run_process_stage` and `run_summarize_stage` for determining which items to work on based on specific_id, overwrite_flag, and whether items were passed from a previous stage. This logic could be extracted into a reusable helper function (or potentially integrated into the `DynamoDBState` class) to reduce duplication and improve clarity. For example, a function like `get_items_for_stage(stage_name, specific_id, overwrite, previous_stage_items)` could encapsulate this.
+
 
 2. **Introduce Data Classes or Pydantic Models**: The pipeline passes around lists of dictionaries (List[Dict]). While flexible, this makes it hard to know the expected structure of an 'item' and can lead to errors (e.g., typos in keys). Using Python's dataclasses or a library like Pydantic to define a clear Item model would improve type hinting, code readability, auto-completion, and overall robustness. You'd know exactly what fields (guid, title, link, s3_path, is_processed, etc.) an item should have at different stages.
 
@@ -43,9 +49,12 @@
 
 
 ## Ensuring Reusability under different architectures:
-- **Shift Orchestration Logic into Core Classes**: The run_*_stage functions in main.py currently handle too much logic beyond just calling the relevant class. Move more of the "how" into the classes themselves.
-Example (run_fetch_stage): Instead of main.py checking for existing items and deciding whether to update or create metadata, the RssFetcher (perhaps renamed or having a dedicated method like fetch_and_update_state) should encapsulate fetching and interacting with DynamoDBState to store/update the fetched item metadata and S3Storage to store HTML. main.py would simply call fetcher.fetch_and_update_state(specific_url=args.rss_url) and get back a list of fetched item identifiers or - minimal metadata needed for the next stage.
-Example (run_process_stage): The MarkdownProcessor should have a method like process_item(item_metadata) or process_batch(items_metadata) that takes item metadata (including guid and html_path), uses S3Storage to get the HTML, performs processing, uses S3Storage again to store the markdown, and uses DynamoDBState to update the status (is_processed, s3_path, is_paywall, etc.). main.py's run_process_stage would focus only on getting the list of items to process (using the potential get_items_for_stage helper discussed previously) and then iterating, - calling processor.process_item(item) for each.
+**Shift Orchestration Logic into Core Classes**: The run_*_stage functions in main.py currently handle too much logic beyond just calling the relevant class. Move more of the "how" into the classes themselves.
+- Example (`run_fetch_stage`): Instead of main.py checking for existing items and deciding whether to update or create metadata, the RssFetcher (perhaps renamed or having a dedicated method like fetch_and_update_state) should encapsulate fetching and interacting with DynamoDBState to store/update the fetched item metadata and S3Storage to store HTML. main.py would simply call fetcher.fetch_and_update_state(specific_url=args.rss_url) and get back a list of fetched item identifiers or - minimal metadata needed for the next stage.
+- Example (`run_process_stage`): The MarkdownProcessor should have a method like process_item(item_metadata) or process_batch(items_metadata) that takes item metadata (including guid and html_path), uses S3Storage to get the HTML, performs processing, uses S3Storage again to store the markdown, and uses DynamoDBState to update the status (is_processed, s3_path, is_paywall, etc.). main.py's run_process_stage would focus only on getting the list of items to process (using the potential get_items_for_stage helper discussed previously) and then iterating, - calling processor.process_item(item) for each.
+- `run_summarize_stage`:
+- `run_curate_stage`:
+
 
 **Strictly Define Class Responsibilities & Interactions**: Ensure each class has a laser - focus and interacts with others through well-defined interfaces (methods).
 RssFetcher: Responsible only for fetching content from RSS feeds and returning structured data (like raw HTML, title, link, dates). It might interact with storage - to save the raw HTML, but shouldn't know about processing or summarization statuses.

@@ -6,6 +6,7 @@ import feedparser
 from src.content_curator.fetchers.fetcher_base import Fetcher
 from src.content_curator.fetchers.fetcher_utils import get_urls_for_fetch
 from src.content_curator.models import ContentItem
+from src.content_curator.storage.dynamodb_state import DynamoDBState
 from src.content_curator.storage.s3_storage import S3Storage
 from src.content_curator.utils import generate_guid_for_rss_entry
 
@@ -19,6 +20,7 @@ class RssFetcher(Fetcher):
         max_items: Optional[int] = None,
         specific_url: Optional[str] = None,
         s3_storage: Optional[S3Storage] = None,
+        state_manager: Optional[DynamoDBState] = None,
     ):
         """
         Initializes the RSS Fetcher.
@@ -28,6 +30,7 @@ class RssFetcher(Fetcher):
             max_items: Maximum number of most recent items to fetch per feed. If None, fetch all items.
             specific_url: Optional specific URL to fetch, overrides url_file_path if provided.
             s3_storage: Optional S3Storage instance for storing HTML content.
+            state_manager: Optional DynamoDBState instance for managing state.
         """
         source_identifier = (
             specific_url if specific_url else url_file_path or "direct_url"
@@ -37,6 +40,7 @@ class RssFetcher(Fetcher):
         self.specific_url = specific_url
         self.max_items = max_items
         self.s3_storage = s3_storage
+        self.state_manager = state_manager
 
     def _read_urls_from_file(self) -> List[str]:
         """Gets URLs either from file or from specific_url parameter."""
@@ -157,7 +161,6 @@ class RssFetcher(Fetcher):
                         fetch_date=fetch_date,
                         source_url=url,
                         html_content=html_content,
-                        is_fetched=True,
                         html_path=html_path,
                     )
 
@@ -177,6 +180,111 @@ class RssFetcher(Fetcher):
             f"Finished processing feeds. Total items fetched: {len(all_items)}"
         )
         return all_items
+
+    def fetch_and_update_state(
+        self, specific_id: Optional[str] = None
+    ) -> List[ContentItem]:
+        """
+        Fetches items from RSS feeds and updates DynamoDB state.
+        This method encapsulates the entire fetch stage logic.
+
+        Args:
+            specific_id: Optional ID of a specific item to fetch
+
+        Returns:
+            List of ContentItem objects that were fetched and updated
+        """
+        if not self.s3_storage or not self.state_manager:
+            self.logger.error(
+                "S3Storage and DynamoDBState are required for fetch_and_update_state"
+            )
+            return []
+
+        # Handle specific_id case
+        if specific_id and not self.specific_url:
+            item = self.state_manager.get_item(specific_id)
+            if item:
+                return [item]
+            else:
+                self.logger.warning(f"No item found with ID: {specific_id}")
+                return []
+
+        # Fetch items from RSS feeds
+        fetched_items: List[ContentItem] = self.fetch_items()
+
+        if not fetched_items:
+            self.logger.warning("No items were fetched.")
+            return []
+
+        self.logger.info(f"--- Fetched {len(fetched_items)} items ---")
+
+        # Store items to AWS
+        skipped_items = 0
+        updated_items = 0
+        new_items = 0
+
+        for item in fetched_items:
+            # Check if item already exists
+            if self.state_manager.item_exists(item.guid):
+                # Update existing item
+                existing_item = self.state_manager.get_item(item.guid)
+                if existing_item:
+                    # Check if HTML content already exists
+                    if existing_item.html_path:
+                        self.logger.debug(
+                            f"Item {item.guid} already has HTML content at {existing_item.html_path}, will be preserved"
+                        )
+                        skipped_items += 1
+
+                    # Store the current processing state via paths
+                    md_path = existing_item.md_path
+                    summary_path = existing_item.summary_path
+                    short_summary_path = existing_item.short_summary_path
+                    is_paywall = existing_item.is_paywall
+                    to_be_summarized = existing_item.to_be_summarized
+                    newsletters = existing_item.newsletters
+
+                    # Update only fetch-related fields
+                    existing_item.title = item.title
+                    existing_item.link = item.link
+                    existing_item.published_date = item.published_date
+                    existing_item.fetch_date = item.fetch_date
+                    existing_item.source_url = item.source_url
+                    existing_item.html_path = item.html_path
+                    existing_item.last_updated = datetime.now().isoformat()
+
+                    # Restore processing state
+                    existing_item.md_path = md_path
+                    existing_item.summary_path = summary_path
+                    existing_item.short_summary_path = short_summary_path
+                    existing_item.is_paywall = is_paywall
+                    existing_item.to_be_summarized = to_be_summarized
+                    existing_item.newsletters = newsletters
+
+                    # Update in DynamoDB
+                    self.state_manager.update_item(existing_item)
+                    updated_items += 1
+                    self.logger.debug(
+                        f"Updated fetch metadata for item: {item.guid} (preserved processing paths)"
+                    )
+            else:
+                # Store new item in DynamoDB
+                self.state_manager.store_item(item)
+                new_items += 1
+                self.logger.debug(
+                    f"Created new item metadata: {item.guid} - '{item.title}'"
+                )
+
+        # Log summary stats
+        if skipped_items > 0:
+            self.logger.warning(
+                f"Skipped fetching HTML for {skipped_items} items that already had HTML content"
+            )
+        self.logger.info(
+            f"Fetch summary: {new_items} new items, {updated_items} updated items, {skipped_items} skipped items"
+        )
+
+        return fetched_items
 
 
 if __name__ == "__main__":

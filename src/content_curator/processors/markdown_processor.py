@@ -6,20 +6,31 @@ from langchain_core.documents import Document
 from loguru import logger
 
 from src.content_curator.models import ContentItem
+from src.content_curator.storage.dynamodb_state import DynamoDBState
+from src.content_curator.storage.s3_storage import S3Storage
 
 
 class MarkdownProcessor:
     """Handles content processing tasks like HTML to Markdown conversion and summarization."""
 
-    def __init__(self, min_content_length: int = 500):
+    def __init__(
+        self,
+        min_content_length: int = 500,
+        s3_storage: Optional[S3Storage] = None,
+        state_manager: Optional[DynamoDBState] = None,
+    ):
         """
         Initialize the content processor with necessary transformers.
 
         Args:
             min_content_length: Minimum text length (in characters) to be considered worth summarizing
+            s3_storage: Optional S3Storage instance for retrieving and storing content
+            state_manager: Optional DynamoDBState instance for updating item state
         """
         self.logger = logger
         self.min_content_length = min_content_length
+        self.s3_storage = s3_storage
+        self.state_manager = state_manager
         # Initialize MarkdownifyTransformer with proper configuration
         self.md = MarkdownifyTransformer(
             heading_style="ATX",  # Use # style headings
@@ -328,10 +339,7 @@ class MarkdownProcessor:
             )
             item.to_be_summarized = to_be_summarized
 
-            # Mark as processed
-            item.is_processed = True
-
-            # Set the md_path for markdown content
+            # Set the md_path for markdown content - indicates processed state
             item.md_path = f"markdown/{item.guid}.md"
 
             if is_paywall:
@@ -360,3 +368,101 @@ class MarkdownProcessor:
         """
         # Simply reuse the list processing logic
         return self.process_content([item])[0]
+
+    def process_and_update_state(
+        self,
+        items_to_process: List[ContentItem],
+        overwrite_flag: bool = False,
+    ) -> List[ContentItem]:
+        """
+        Process a list of content items and update their state in S3 and DynamoDB.
+        This method encapsulates the entire process stage logic.
+
+        Args:
+            items_to_process: List of ContentItem objects to process
+            overwrite_flag: Whether to process items that are already processed
+
+        Returns:
+            List of processed ContentItem objects
+        """
+        if not self.s3_storage or not self.state_manager:
+            self.logger.error(
+                "S3Storage and DynamoDBState are required for process_and_update_state"
+            )
+            return []
+
+        processed_items = []
+        skipped_already_processed = 0
+        skipped_no_html = 0
+        skipped_existing_markdown = 0
+        successfully_processed = 0
+
+        for item in items_to_process:
+            # Check if markdown content already exists
+            if item.md_path:
+                if overwrite_flag:
+                    self.logger.debug(
+                        f"Item {item.guid} already has markdown content at {item.md_path}, will be overwritten (overwrite flag is enabled)"
+                    )
+                else:
+                    self.logger.debug(
+                        f"Item {item.guid} already has markdown content at {item.md_path}, will be preserved"
+                    )
+                    skipped_existing_markdown += 1
+
+            # Skip already processed items (check md_path) unless overwrite is enabled
+            if item.md_path and not overwrite_flag:
+                self.logger.debug(
+                    f"Item '{item.title}' ({item.guid}) already processed (has md_path), skipping..."
+                )
+                processed_items.append(item)
+                skipped_already_processed += 1
+                continue
+
+            # Fetch HTML content from S3 if not already loaded
+            if not item.html_content and item.html_path:
+                html_content = self.s3_storage.get_content(item.html_path)
+                if html_content:
+                    item.html_content = html_content
+                else:
+                    self.logger.debug(
+                        f"Could not retrieve HTML content for {item.guid}"
+                    )
+                    skipped_no_html += 1
+                    continue
+
+            # Process the item (convert HTML to markdown)
+            item = self.process_item(item)
+
+            # Store markdown content in S3
+            if item.markdown_content:
+                s3_key = f"markdown/{item.guid}.md"
+                if self.s3_storage.store_content(s3_key, item.markdown_content):
+                    item.md_path = s3_key
+                    # Update the item in DynamoDB
+                    self.state_manager.update_item(item)
+                    self.logger.debug(
+                        f"Updated item '{item.title}' ({item.guid}): stored markdown content"
+                    )
+                    processed_items.append(item)
+                    successfully_processed += 1
+                else:
+                    self.logger.error(
+                        f"Failed to store markdown content for {item.guid}"
+                    )
+            else:
+                self.logger.debug(f"No markdown content generated for {item.guid}")
+
+        # Log summary stats
+        total_skipped = (
+            skipped_already_processed + skipped_no_html + skipped_existing_markdown
+        )
+        if total_skipped > 0:
+            self.logger.warning(
+                f"Skipped processing {total_skipped} items: {skipped_already_processed} already processed, {skipped_existing_markdown} with existing markdown, {skipped_no_html} missing HTML"
+            )
+
+        self.logger.info(
+            f"Process summary: {successfully_processed} items processed, {total_skipped} items skipped"
+        )
+        return processed_items

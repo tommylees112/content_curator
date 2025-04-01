@@ -19,20 +19,20 @@ class ContentItem:
     )
     source_url: Optional[str] = None  # The URL of the RSS feed it came from
 
-    # Status flags
-    is_fetched: bool = False
-    is_processed: bool = False
-    is_summarized: bool = False
-    is_distributed: bool = False  # Flag indicating if included in a newsletter
+    # Content quality flags (not processing state)
     is_paywall: Optional[bool] = None  # Determined during processing
     to_be_summarized: Optional[bool] = None  # Determined during processing
 
     # Content storage references (Paths/Keys in S3)
-    html_path: Optional[str] = None  # Path to the raw HTML content
-    md_path: Optional[str] = (
-        None  # Path to the processed Markdown content (maintaining field name from main.py)
+    html_path: Optional[str] = (
+        None  # Path to the raw HTML content - indicates item is fetched
     )
-    summary_path: Optional[str] = None  # Path to the standard summary
+    md_path: Optional[str] = (
+        None  # Path to the processed Markdown content - indicates item is processed
+    )
+    summary_path: Optional[str] = (
+        None  # Path to the standard summary - indicates item is summarized
+    )
     short_summary_path: Optional[str] = None  # Path to the brief summary
 
     # Content (loaded in memory when needed, not typically stored in the dataclass long-term)
@@ -45,7 +45,7 @@ class ContentItem:
     # Curation/Distribution info
     newsletters: List[str] = field(
         default_factory=list
-    )  # List of newsletter IDs it was included in
+    )  # List of newsletter IDs it was included in - non-empty list indicates item is distributed
 
     # Timestamps
     last_updated: Optional[str] = field(

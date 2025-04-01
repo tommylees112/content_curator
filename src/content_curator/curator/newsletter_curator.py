@@ -51,13 +51,14 @@ class NewsletterCurator:
             self.logger.error("Either most_recent or n_days must be provided")
             return []
 
-        # Get all items with summaries
-        all_items = self.state_manager.get_items_by_status_flags(
-            is_summarized=True, as_content_items=True
-        )
-
-        # Determine which path field to check based on summary_type
+        # Get all items with summaries based on path existence
         path_field = "short_summary_path" if summary_type == "short" else "summary_path"
+
+        # Use the path-based query method
+        all_items = self.state_manager.get_items_by_status_paths(
+            summary_path_exists=True if path_field == "summary_path" else None,
+            as_content_items=True,
+        )
 
         # Filter for items that have the requested summary type
         summarized_items = [
@@ -204,10 +205,9 @@ class NewsletterCurator:
         # Extract the item GUIDs for tracking newsletter inclusion
         included_guids = [item.guid for item in recent_items if item.guid]
 
-        # Update the is_distributed flag and newsletters list for each item
+        # Update newsletters list for each item to indicate distribution
         newsletter_id = f"newsletter_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
         for item in recent_items:
-            item.is_distributed = True
             if not hasattr(item, "newsletters") or item.newsletters is None:
                 item.newsletters = []
             item.newsletters.append(newsletter_id)
@@ -215,6 +215,57 @@ class NewsletterCurator:
             self.state_manager.update_item(item)
 
         return formatted_content, included_guids
+
+    def curate_and_update_state(
+        self,
+        most_recent: Optional[int] = 5,
+        n_days: Optional[int] = None,
+        summary_type: Literal["short", "standard"] = "short",
+    ) -> str:
+        """
+        Generate a newsletter, save it to S3, and update DynamoDB state.
+        This method encapsulates the entire curation stage logic.
+
+        Args:
+            most_recent: Number of most recent items to include
+            n_days: Number of days to look back from today
+            summary_type: Type of summary to use ("short" or "standard")
+
+        Returns:
+            The generated newsletter content
+        """
+        if not self.s3_storage:
+            self.logger.error("S3Storage is required for curate_and_update_state")
+            return ""
+
+        # Get and format recent content
+        curated_content, included_items = self.curate_recent_content(
+            most_recent=most_recent, n_days=n_days, summary_type=summary_type
+        )
+
+        if not curated_content:
+            self.logger.warning("No content available for newsletter curation.")
+            return ""
+
+        # Create a timestamp for the filename
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        newsletter_id = f"newsletter_{timestamp}"
+
+        # Save the curated content to S3 with timestamp
+        s3_key = f"curated/{newsletter_id}.md"
+        if self.s3_storage.store_content(s3_key, curated_content):
+            self.logger.info(f"Newsletter saved to S3 at {s3_key}")
+        else:
+            self.logger.error("Failed to save newsletter to S3")
+
+        # Also save at a fixed location as "latest.md"
+        latest_key = "curated/latest.md"
+        if self.s3_storage.store_content(latest_key, curated_content):
+            self.logger.info(f"Newsletter saved to S3 at {latest_key} (latest version)")
+        else:
+            self.logger.error("Failed to save latest newsletter to S3")
+
+        return curated_content
 
 
 if __name__ == "__main__":
