@@ -15,7 +15,7 @@ from src.content_curator.processors.markdown_processor import MarkdownProcessor
 from src.content_curator.storage.dynamodb_state import DynamoDBState
 from src.content_curator.storage.s3_storage import S3Storage
 from src.content_curator.summarizers.summarizer import Summarizer
-from src.content_curator.utils import check_resources, generate_url_hash
+from src.content_curator.utils import check_resources
 
 
 def parse_arguments():
@@ -48,26 +48,41 @@ def parse_arguments():
         help="Overwrite existing processed or summarized content",
     )
     parser.add_argument(
+        "--save_locally",
+        action="store_true",
+        help="Save processed content and newsletters to local files for debugging",
+    )
+    parser.add_argument(
         "--id",
         type=str,
         help="Process a specific item by its ID (URL hash). If provided, will only process this item.",
     )
     parser.add_argument(
-        "--url",
+        "--rss_url",
         type=str,
-        help="Process a specific URL. Will be converted to an ID hash automatically.",
+        help="Process all items from a specific RSS feed URL. Uses the fetch stage to get content from this feed.",
     )
 
     # Parse the arguments
     args = parser.parse_args()
 
-    # If URL is provided, convert it to an ID
-    if args.url:
-        args.id = generate_url_hash(args.url)
-        logger.info(f"URL hash: {args.id}")
+    # If RSS URL is provided, enable appropriate stages
+    if args.rss_url:
+        # When an RSS URL is provided, enable all stages by default unless specific stages are requested
+        if not (args.fetch or args.process or args.summarize or args.curate):
+            args.fetch = True
+            args.process = True
+            args.summarize = True
+            logger.info(
+                "All pipeline stages enabled automatically for RSS URL processing"
+            )
+        # Otherwise, make sure at least fetch is enabled
+        elif not args.fetch:
+            args.fetch = True
+            logger.info("Fetch stage enabled automatically for RSS URL processing")
 
     # If no arguments provided or --all specified, run all stages
-    if not (args.fetch or args.process or args.summarize or args.curate) or args.all:
+    elif not (args.fetch or args.process or args.summarize or args.curate) or args.all:
         args.fetch = True
         args.process = True
         args.summarize = True
@@ -105,11 +120,14 @@ def setup_services() -> Tuple[DynamoDBState, S3Storage]:
 
 
 def run_fetch_stage(
-    state_manager: DynamoDBState, specific_id: Optional[str] = None
+    state_manager: DynamoDBState,
+    s3_storage: S3Storage,
+    specific_id: Optional[str] = None,
+    rss_url: Optional[str] = None,
 ) -> List[Dict]:
     """Run the fetch stage to get new content."""
     # If specific_id is provided, try to fetch just that item from the database
-    if specific_id:
+    if specific_id and not rss_url:
         item = state_manager.get_metadata(specific_id)
         if item:
             return [item]
@@ -117,12 +135,18 @@ def run_fetch_stage(
             logger.warning(f"No item found with ID: {specific_id}")
             return []
 
-    # Initialize fetcher
-    rss_url_file: Path = Path(__file__).parent / "data" / "rss_urls.txt"
-    fetcher: RssFetcher = RssFetcher(url_file_path=str(rss_url_file), max_items=5)
+    # Initialize fetcher with either a file of URLs or a specific RSS URL
+    if rss_url:
+        # Create RssFetcher with the specific RSS URL
+        logger.info(f"Fetching from RSS URL: {rss_url}")
+        fetcher = RssFetcher(max_items=5, specific_url=rss_url)
+    else:
+        # Use the default file of RSS URLs
+        rss_url_file: Path = Path(__file__).parent / "data" / "rss_urls.txt"
+        fetcher = RssFetcher(url_file_path=str(rss_url_file), max_items=5)
 
     logger.info("Fetching content...")
-    fetched_items: List[Dict] = fetcher.run()
+    fetched_items: List[Dict] = fetcher.fetch_items()
 
     if not fetched_items:
         logger.warning("No items were fetched.")
@@ -507,7 +531,7 @@ def run_curate_stage(
     curator = NewsletterCurator(state_manager=state_manager, s3_storage=s3_storage)
 
     # Get and format recent content
-    curated_content = curator.curate_recent_content(
+    curated_content, included_items = curator.curate_recent_content(
         most_recent=most_recent, n_days=n_days, summary_type=summary_type
     )
 
@@ -517,13 +541,44 @@ def run_curate_stage(
 
     # Create a timestamp for the filename
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    newsletter_id = f"newsletter_{timestamp}"
 
-    # Save the curated content to S3
-    s3_key = f"curated/newsletter_{timestamp}.md"
+    # Save the curated content to S3 with timestamp
+    s3_key = f"curated/{newsletter_id}.md"
     if s3_storage.store_content(s3_key, curated_content):
         logger.info(f"Newsletter saved to S3 at {s3_key}")
+
+        # Update each included item with this newsletter ID
+        for item_guid in included_items:
+            # Get current newsletters list or create empty one
+            item = state_manager.get_metadata(item_guid)
+            if item:
+                newsletters = item.get("newsletters", [])
+
+                # Add this newsletter if not already in the list
+                if newsletter_id not in newsletters:
+                    newsletters.append(newsletter_id)
+
+                    # Update the item in DynamoDB
+                    state_manager.update_metadata(
+                        guid=item_guid,
+                        updates={
+                            "newsletters": newsletters,
+                            "last_updated": datetime.now().isoformat(),
+                        },
+                    )
+                    logger.debug(
+                        f"Updated item {item_guid} with newsletter {newsletter_id}"
+                    )
     else:
         logger.error("Failed to save newsletter to S3")
+
+    # Also save at a fixed location as "latest.md"
+    latest_key = "curated/latest.md"
+    if s3_storage.store_content(latest_key, curated_content):
+        logger.info(f"Newsletter saved to S3 at {latest_key} (latest version)")
+    else:
+        logger.error("Failed to save latest newsletter to S3")
 
     return curated_content
 
@@ -569,7 +624,9 @@ def main():
 
     # Run fetch stage if enabled
     if args.fetch:
-        fetched_items = run_fetch_stage(state_manager, args.id)
+        fetched_items = run_fetch_stage(
+            state_manager, s3_storage, args.id, args.rss_url
+        )
 
     # Run process stage if enabled
     if args.process:
@@ -581,6 +638,9 @@ def main():
             args.overwrite,
             args.id,
         )
+        # Save last processed item if requested
+        if args.save_locally:
+            save_last_item(processed_items, args.summarize)
 
     # Run summarize stage if enabled
     if args.summarize:
@@ -592,6 +652,9 @@ def main():
             args.overwrite,
             args.id,
         )
+        # Save last summarized item if requested (and not already saved in process stage)
+        if args.save_locally and not args.process:
+            save_last_item(summarized_items, args.summarize)
 
     # Run curate stage if enabled
     if args.curate:
@@ -601,7 +664,7 @@ def main():
             most_recent=10,  # Default to 10 most recent items
         )
         # Optionally save to local file for debugging
-        if curated_content:
+        if curated_content and args.save_locally:
             try:
                 output_path = "/tmp/latest_newsletter.md"
                 with open(output_path, "w", encoding="utf-8") as f:
