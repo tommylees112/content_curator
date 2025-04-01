@@ -22,6 +22,13 @@ The system is designed with a modular architecture:
 - **Distributors**: Send notifications about processed content (Slack)
 - **State Management**: Track which items have been processed and their status
 
+RssFetcher: Responsible only for fetching content from RSS feeds and returning structured data (like raw HTML, title, link, dates). It might interact with storage to save the raw HTML, but shouldn't know about processing or summarization statuses.
+MarkdownProcessor: Takes raw HTML (or a reference like an S3 path), converts it to Markdown, determines if it's suitable for summarization (is_paywall, length checks), and returns the Markdown content and flags. It interacts with storage to get HTML and save Markdown.
+Summarizer: Takes Markdown content (or a reference), generates summaries, and returns them. Interacts with storage to get Markdown and save summaries.
+NewsletterCurator: Queries the DynamoDBState for items meeting curation criteria (e.g., summarized recently), fetches necessary summaries using S3Storage, formats the newsletter, saves it using S3Storage, and potentially updates item state via DynamoDBState.
+DynamoDBState & S3Storage: Solely responsible for interacting with AWS DynamoDB and S3 respectively. No business logic like parsing or summarization should exist here.
+
+
 ## AWS Storage Structure
 
 The system uses AWS for storage:
