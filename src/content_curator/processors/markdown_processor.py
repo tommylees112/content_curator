@@ -1,5 +1,5 @@
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from langchain_community.document_transformers import MarkdownifyTransformer
 from langchain_core.documents import Document
@@ -69,12 +69,47 @@ class MarkdownProcessor:
         header = f"Date Updated: {fetch_date}\nDate Published: {published_date}\n\nTitle: {title}\n\nURL Source: {link}\n\nMarkdown Content:\n"
         return header + markdown_content
 
+    def _check_paywall_patterns(
+        self, sample_text: str, paywall_patterns: List[str] = None
+    ) -> Tuple[bool, str]:
+        """
+        Check for paywall patterns in the sample text.
+
+        Args:
+            sample_text: The text to check for paywall patterns
+            paywall_patterns: List of patterns to check. If None, uses default patterns
+
+        Returns:
+            Tuple of (found_pattern: bool, matched_pattern: str)
+        """
+        # Use default patterns if none provided
+        if paywall_patterns is None:
+            paywall_patterns = [
+                r"subscribe now",
+                r"subscribe to continue",
+                r"subscribe for full access",
+                r"read more",
+                r"to continue reading",
+                r"sign up",
+                r"login to continue",
+                r"premium content",
+                r"become a member",
+                r"for subscribers only",
+                r"this content is available to subscribers",
+            ]
+
+        # Check for paywall patterns
+        for pattern in paywall_patterns:
+            if re.search(pattern, sample_text, re.IGNORECASE):
+                return True, pattern
+        return False, ""
+
     def is_paywall_or_teaser(
         self,
         markdown_content: str,
         min_content_length: int = 100,
         paywall_patterns: List[str] = None,
-        max_link_ratio: float = 0.2,
+        max_link_ratio: float = 0.3,
         min_failures_to_reject: int = 2,
     ) -> bool:
         """
@@ -124,34 +159,15 @@ class MarkdownProcessor:
             )
             failed_checks += 1
 
-        # Use default patterns if none provided
-        if paywall_patterns is None:
-            paywall_patterns = [
-                r"subscribe now",
-                r"subscribe to continue",
-                r"subscribe for full access",
-                r"read more",
-                r"to continue reading",
-                r"sign up",
-                r"login to continue",
-                r"premium content",
-                r"become a member",
-                r"for subscribers only",
-                r"this content is available to subscribers",
-            ]
-
         # Get text to check for paywall patterns - just the first few paragraphs
         sample_text = clean_text[:500].lower()
 
         # Check for paywall patterns
-        found_paywall_pattern = False
-        for pattern in paywall_patterns:
-            if re.search(pattern, sample_text, re.IGNORECASE):
-                found_paywall_pattern = True
-                self.logger.info(f"Found paywall pattern: '{pattern}'")
-                break
-
-        if found_paywall_pattern:
+        found_pattern, matched_pattern = self._check_paywall_patterns(
+            sample_text, paywall_patterns
+        )
+        if found_pattern:
+            self.logger.info(f"Found paywall pattern: '{matched_pattern}'")
             failed_checks += 1
 
         # Check link ratio

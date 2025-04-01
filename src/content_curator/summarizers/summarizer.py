@@ -128,7 +128,7 @@ class Summarizer:
         Returns:
             A summary of the content or None if summarization fails
         """
-        if not content or not isinstance(content, str):
+        if not content or not isinstance(content, str) or not content.strip():
             self.logger.warning(
                 f"Invalid content provided for summarization: {type(content)}"
             )
@@ -189,7 +189,7 @@ class Summarizer:
             content = item.get("markdown_content", "")
             if not content:
                 self.logger.warning(
-                    f"Skipping item {item.get('guid', 'N/A')} due to missing markdown content."
+                    f"Skipping item '{item.get('title', 'N/A')}' ({item.get('guid', 'N/A')}) due to missing markdown content."
                 )
                 # Don't modify the item if no content
                 results.append(item.copy())
@@ -202,6 +202,11 @@ class Summarizer:
             item_with_summary = item.copy()
             item_with_summary[summary_field] = summary
             results.append(item_with_summary)
+
+            if summary:
+                self.logger.info(
+                    f"Generated '{summary_type}' summary for '{item.get('title', 'N/A')}' ({item.get('guid', 'N/A')})"
+                )
 
         self.logger.info(f"Generated {summary_type} summaries for {len(results)} items")
         return results

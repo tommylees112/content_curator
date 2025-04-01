@@ -299,3 +299,48 @@ class DynamoDBState:
         except Exception as e:
             self.logger.error(f"Error updating metadata for item {guid}: {e}")
             return False
+
+    def delete_item(self, guid: str) -> bool:
+        """
+        Delete an item from DynamoDB by its GUID.
+
+        Args:
+            guid: The unique identifier of the item to delete
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            self.table.delete_item(Key={"guid": guid})
+            self.logger.info(f"Deleted item with GUID: {guid}")
+            return True
+        except Exception as e:
+            self.logger.error(f"Error deleting item {guid}: {e}")
+            return False
+
+    def get_all_items(self) -> List[Dict[str, Any]]:
+        """
+        Get all items from the DynamoDB table.
+
+        Returns:
+            List of all items in the table
+        """
+        try:
+            items = []
+            scan_kwargs = {}
+            done = False
+            start_key = None
+
+            while not done:
+                if start_key:
+                    scan_kwargs["ExclusiveStartKey"] = start_key
+                response = self.table.scan(**scan_kwargs)
+                items.extend(response.get("Items", []))
+                start_key = response.get("LastEvaluatedKey", None)
+                done = start_key is None
+
+            self.logger.info(f"Retrieved {len(items)} items from DynamoDB")
+            return items
+        except Exception as e:
+            self.logger.error(f"Error retrieving all items: {e}")
+            return []

@@ -14,7 +14,7 @@ from src.content_curator.processors.markdown_processor import MarkdownProcessor
 from src.content_curator.storage.dynamodb_state import DynamoDBState
 from src.content_curator.storage.s3_storage import S3Storage
 from src.content_curator.summarizers.summarizer import Summarizer
-from src.content_curator.utils import check_resources
+from src.content_curator.utils import check_resources, generate_url_hash
 
 
 def parse_arguments():
@@ -41,9 +41,24 @@ def parse_arguments():
         action="store_true",
         help="Overwrite existing processed or summarized content",
     )
+    parser.add_argument(
+        "--id",
+        type=str,
+        help="Process a specific item by its ID (URL hash). If provided, will only process this item.",
+    )
+    parser.add_argument(
+        "--url",
+        type=str,
+        help="Process a specific URL. Will be converted to an ID hash automatically.",
+    )
 
     # Parse the arguments
     args = parser.parse_args()
+
+    # If URL is provided, convert it to an ID
+    if args.url:
+        args.id = generate_url_hash(args.url)
+        logger.info(f"URL hash: {args.id}")
 
     # If no arguments provided or --all specified, run all stages
     if not (args.fetch or args.process or args.summarize) or args.all:
@@ -82,8 +97,19 @@ def setup_services() -> Tuple[DynamoDBState, S3Storage]:
     return state_manager, s3_storage
 
 
-def run_fetch_stage(state_manager: DynamoDBState) -> List[Dict]:
+def run_fetch_stage(
+    state_manager: DynamoDBState, specific_id: Optional[str] = None
+) -> List[Dict]:
     """Run the fetch stage to get new content."""
+    # If specific_id is provided, try to fetch just that item from the database
+    if specific_id:
+        item = state_manager.get_metadata(specific_id)
+        if item:
+            return [item]
+        else:
+            logger.warning(f"No item found with ID: {specific_id}")
+            return []
+
     # Initialize fetcher
     rss_url_file: Path = Path(__file__).parent / "data" / "rss_urls.txt"
     fetcher: RssFetcher = RssFetcher(url_file_path=str(rss_url_file), max_items=5)
@@ -159,10 +185,20 @@ def run_process_stage(
     fetched_items: List[Dict],
     fetch_flag: bool,
     overwrite_flag: bool,
+    specific_id: Optional[str] = None,
 ) -> List[Dict]:
     """Run the processing stage to convert HTML to markdown."""
-    # If we didn't fetch items or fetching was disabled, get items from DynamoDB
-    if not fetch_flag or not fetched_items:
+    # ALWAYS check specific_id first, regardless of other flags
+    if specific_id:
+        item = state_manager.get_metadata(specific_id)
+        if item:
+            fetched_items = [item]
+            logger.info(f"Processing single item with ID: {specific_id}")
+        else:
+            logger.warning(f"No item found with ID: {specific_id}")
+            return []
+    # Only do bulk fetching if no specific ID was provided
+    elif not fetch_flag or not fetched_items:
         logger.info("Loading items for processing from database...")
         if overwrite_flag:
             # If overwrite is enabled, get all fetched items regardless of processing status
@@ -174,20 +210,20 @@ def run_process_stage(
             # Otherwise, get only items that need processing
             fetched_items = state_manager.get_items_needing_processing("processed")
 
-        if not fetched_items:
-            logger.warning("No items found for processing.")
-            return []
+    if not fetched_items:
+        logger.warning("No items found for processing.")
+        return []
 
-        logger.info(f"--- Loaded {len(fetched_items)} items for processing ---")
+    logger.info(f"--- Loaded {len(fetched_items)} items for processing ---")
 
-        # Get HTML content from S3 for each item if needed
-        for item in fetched_items:
-            guid = item.get("guid", "")
-            if "html_content" not in item:
-                html_path = item.get("html_path", f"html/{guid}.html")
-                html_content = s3_storage.get_content(html_path)
-                if html_content:
-                    item["html_content"] = html_content
+    # Get HTML content from S3 for each item if needed
+    for item in fetched_items:
+        guid = item.get("guid", "")
+        if "html_content" not in item:
+            html_path = item.get("html_path", f"html/{guid}.html")
+            html_content = s3_storage.get_content(html_path)
+            if html_content:
+                item["html_content"] = html_content
 
     # Initialize processor
     processor: MarkdownProcessor = MarkdownProcessor()
@@ -238,7 +274,9 @@ def run_process_stage(
                 update_info.append(f"to summarize: {updates['to_be_summarized']}")
 
             # Log a clear, concise update message
-            logger.info(f"Updated item {guid}: {', '.join(update_info)}")
+            logger.info(
+                f"Updated item '{item.get('title', 'N/A')}' ({guid}): {', '.join(update_info)}"
+            )
 
     return processed_items
 
@@ -249,44 +287,73 @@ def run_summarize_stage(
     processed_items: List[Dict],
     process_flag: bool,
     overwrite_flag: bool,
+    specific_id: Optional[str] = None,
 ) -> List[Dict]:
     """Run the summarization stage to generate summaries."""
-    # If we didn't process items or processing was disabled, get processed items from DynamoDB
-    if not process_flag or not processed_items:
-        logger.info("Loading items that have been processed for summarization...")
-        if overwrite_flag:
-            # If overwrite is enabled, get all processed items regardless of summarization status
-            logger.info("Overwrite flag enabled - getting all processed items...")
-            db_processed_items = state_manager.get_items_by_status_flags(
-                is_processed=True,
-                limit=100,
-            )
-        else:
-            # Otherwise, get only items that need summarization
-            db_processed_items = state_manager.get_items_by_status_flags(
-                is_processed=True,
-                is_summarized=False,
-                limit=100,
-            )
-
-        if not db_processed_items:
-            logger.warning("No items found for summarization.")
-            return []
-
-        logger.info(f"--- Loaded {len(db_processed_items)} items for summarization ---")
-
-        # We need to fetch the actual content for these items
-        processed_items = []
-        for item in db_processed_items:
+    # ALWAYS check specific_id first, regardless of other flags
+    if specific_id:
+        item = state_manager.get_metadata(specific_id)
+        if item:
+            # Get markdown content from S3 for the specific item
             s3_path = item.get("s3_path")
             if s3_path:
-                # Get markdown content from S3
                 markdown_content = s3_storage.get_content(s3_path)
                 if markdown_content:
                     item["markdown_content"] = markdown_content
-                    processed_items.append(item)
+                    processed_items = [item]
+                    logger.info(f"Processing single item with ID: {specific_id}")
                 else:
-                    logger.warning(f"Could not retrieve content for {item.get('guid')}")
+                    logger.warning(f"Could not retrieve content for item {specific_id}")
+                    return []
+            else:
+                logger.warning(f"No S3 path found for item {specific_id}")
+                return []
+        else:
+            logger.warning(f"No item found with ID: {specific_id}")
+            return []
+
+    # Only do bulk loading if no specific ID was provided
+    if not specific_id:
+        # If we didn't process items or processing was disabled, get processed items from DynamoDB
+        if not process_flag or not processed_items:
+            logger.info("Loading items that have been processed for summarization...")
+            if overwrite_flag:
+                # If overwrite is enabled, get all processed items regardless of summarization status
+                logger.info("Overwrite flag enabled - getting all processed items...")
+                db_processed_items = state_manager.get_items_by_status_flags(
+                    is_processed=True,
+                    limit=100,
+                )
+            else:
+                # Otherwise, get only items that need summarization
+                db_processed_items = state_manager.get_items_by_status_flags(
+                    is_processed=True,
+                    is_summarized=False,
+                    limit=100,
+                )
+
+            if not db_processed_items:
+                logger.warning("No items found for summarization.")
+                return []
+
+            logger.info(
+                f"--- Loaded {len(db_processed_items)} items for summarization ---"
+            )
+
+            # We need to fetch the actual content for these items
+            processed_items = []
+            for item in db_processed_items:
+                s3_path = item.get("s3_path")
+                if s3_path:
+                    # Get markdown content from S3
+                    markdown_content = s3_storage.get_content(s3_path)
+                    if markdown_content:
+                        item["markdown_content"] = markdown_content
+                        processed_items.append(item)
+                    else:
+                        logger.warning(
+                            f"Could not retrieve content for {item.get('guid')}"
+                        )
 
     if not processed_items:
         logger.warning("No items with content available for summarization.")
@@ -306,7 +373,9 @@ def run_summarize_stage(
 
         # Check if item is already summarized and we're not in overwrite mode
         if not overwrite_flag and item.get("is_summarized"):
-            logger.info(f"Item {guid} already summarized, skipping...")
+            logger.info(
+                f"Item '{item.get('title', 'N/A')}' ({guid}) already summarized, skipping..."
+            )
             summarized_items.append(item)
             continue
 
@@ -340,7 +409,7 @@ def run_summarize_stage(
         # Skip items not worth summarizing
         if not to_be_summarized:
             logger.warning(
-                f"Item {guid} marked as not worth summarizing, skipping...\n{item.get('markdown_content', '')}"
+                f"Item '{item.get('title', 'N/A')}' ({guid}) marked as not worth summarizing, skipping..."
             )
             # Add to results but don't summarize
             item["is_summarized"] = False  # Explicitly mark as not summarized
@@ -393,15 +462,27 @@ def run_summarize_stage(
                     update_overview.append(f"brief summary: {short_summary_key}")
 
                 # Log a clear, concise update message
-                logger.info(f"Updated item {guid}: {', '.join(update_overview)}")
+                logger.info(
+                    f"Updated item '{item.get('title', 'N/A')}' ({guid}): {', '.join(update_overview)}"
+                )
         else:
-            logger.warning(f"No summary generated for item {guid}")
+            logger.error(f"Failed to generate summary for item: {guid}")
+            item["is_summarized"] = False
+            state_manager.update_metadata(
+                guid=guid,
+                updates={
+                    "is_summarized": False,
+                    "last_updated": datetime.now().isoformat(),
+                },
+            )
 
         summarized_items.append(item)
 
+    # Log final summary
     logger.info(
-        f"Summarization complete: {items_to_summarize} items processed, {items_skipped} items skipped"
+        f"Summarization complete: {items_to_summarize} items summarized, {items_skipped} items skipped"
     )
+
     return summarized_items
 
 
@@ -428,54 +509,51 @@ def save_last_item(processed_items: List[Dict], summarize_flag: bool):
         logger.error(f"Error saving markdown content: {e}")
 
 
-if __name__ == "__main__":
+def main():
+    """Main entry point for the content curation pipeline."""
+    # Load environment variables
+    load_dotenv()
+
     # Parse command line arguments
     args = parse_arguments()
 
-    # Load environment variables from .env file
-    load_dotenv()
-
-    logger.info("Starting content curation process...")
-    logger.info(
-        f"Pipeline stages: Fetch={args.fetch}, Process={args.process}, Summarize={args.summarize}"
-    )
-
-    # Setup services
+    # Initialize services
     state_manager, s3_storage = setup_services()
 
-    # Initialize tracking for pipeline stages
-    fetched_items = []
-    processed_items = []
-    summarized_items = []
+    # Initialize variables to track items through pipeline
+    fetched_items: List[Dict] = []
+    processed_items: List[Dict] = []
+    summarized_items: List[Dict] = []
 
-    # Step 1: Fetch raw content (if enabled)
+    # Run fetch stage if enabled
     if args.fetch:
-        fetched_items = run_fetch_stage(state_manager)
-        if not fetched_items and not (args.process or args.summarize):
-            logger.warning(
-                "No items were fetched and no further stages enabled. Exiting."
-            )
-            sys.exit(0)
+        fetched_items = run_fetch_stage(state_manager, args.id)
 
-    # Step 2: Process content (if enabled)
+    # Run process stage if enabled
     if args.process:
         processed_items = run_process_stage(
-            state_manager, s3_storage, fetched_items, args.fetch, args.overwrite
+            state_manager,
+            s3_storage,
+            fetched_items,
+            args.fetch,
+            args.overwrite,
+            args.id,
         )
-        if not processed_items and not args.summarize:
-            logger.warning(
-                "No items were processed and no further stages enabled. Exiting."
-            )
-            sys.exit(0)
 
-    # Step 3: Summarize the content (if enabled)
+    # Run summarize stage if enabled
     if args.summarize:
         summarized_items = run_summarize_stage(
-            state_manager, s3_storage, processed_items, args.process, args.overwrite
+            state_manager,
+            s3_storage,
+            processed_items,
+            args.process,
+            args.overwrite,
+            args.id,
         )
-        if not summarized_items:
-            logger.warning("No items were summarized. Exiting.")
-            sys.exit(0)
 
-    # Display summary of what was done
-    logger.info("--- Pipeline execution completed ---")
+    # Save the last processed item for debugging
+    save_last_item(processed_items, args.summarize)
+
+
+if __name__ == "__main__":
+    main()

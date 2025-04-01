@@ -128,12 +128,6 @@ class RssFetcher(Fetcher):
                     # Generate guid using the utility function
                     guid = generate_guid_for_rss_entry(entry, url, title)
 
-                    # Log warning if guid is potentially unreliable
-                    if guid.startswith(f"{url}::"):
-                        self.logger.warning(
-                            f"Entry lacks both 'id' and 'link', cannot generate reliable GUID for '{title}' in feed {url}"
-                        )
-
                     # Extract HTML content
                     html_content = self._extract_html_content(entry)
 
@@ -152,6 +146,16 @@ class RssFetcher(Fetcher):
                         "html_content": html_content,
                     }
                     all_items.append(item)
+
+                    self.logger.info(
+                        f"Created new item metadata: '{item.get('title', '')}' ({guid})"
+                    )
+
+                    # Store HTML content reference
+                    html_key = f"html/{guid}.html"
+                    self.logger.debug(
+                        f"Stored HTML content for '{item.get('title', '')}' ({guid}) at: {html_key}"
+                    )
 
             except Exception as e:
                 self.logger.error(
