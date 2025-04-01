@@ -13,6 +13,11 @@ permissions:
 jobs:
   content-curation:
     runs-on: ubuntu-latest
+    
+    env:
+      AWS_REGION: eu-north-1
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
     steps:
     - name: Checkout repo
@@ -31,7 +36,6 @@ jobs:
 
     - name: Run fetch stage
       run: |
-        mkdir -p logs
         uv run python scripts/main.py --fetch
 
     - name: Run process stage
