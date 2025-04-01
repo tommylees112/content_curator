@@ -1,8 +1,9 @@
 import base64
 import hashlib
+import re
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
-from typing import Optional, Union
+from typing import List, Optional, Tuple, Union
 
 from dateutil import parser as date_parser
 from loguru import logger
@@ -214,3 +215,211 @@ def format_date_iso(dt: Optional[datetime] = None) -> str:
         # Make timezone-aware if it isn't already
         dt = dt.replace(tzinfo=timezone.utc)
     return dt.isoformat()
+
+
+def _check_paywall_patterns(
+    sample_text: str, paywall_patterns: List[str] = None
+) -> Tuple[bool, str]:
+    """
+    Check for paywall patterns in the sample text.
+
+    Args:
+        sample_text: The text to check for paywall patterns
+        paywall_patterns: List of patterns to check. If None, uses default patterns
+
+    Returns:
+        Tuple of (found_pattern: bool, matched_pattern: str)
+    """
+    # Use default patterns if none provided
+    if paywall_patterns is None:
+        paywall_patterns = [
+            r"subscribe now",
+            r"subscribe to continue",
+            r"subscribe for full access",
+            r"read more",
+            r"to continue reading",
+            r"sign up",
+            r"login to continue",
+            r"premium content",
+            r"become a member",
+            r"for subscribers only",
+            r"this content is available to subscribers",
+        ]
+
+    # Check for paywall patterns
+    for pattern in paywall_patterns:
+        if re.search(pattern, sample_text, re.IGNORECASE):
+            return True, pattern
+    return False, ""
+
+
+def is_paywall_or_teaser(
+    markdown_content: str,
+    min_content_length: int = 100,
+    paywall_patterns: List[str] = None,
+    max_link_ratio: float = 0.3,
+    min_failures_to_reject: int = 2,
+) -> bool:
+    """
+    Detect if content appears to be behind a paywall or is just a teaser.
+
+    The function performs three quality checks:
+    1. Content Length: Fails if content is shorter than min_content_length (default: 100 chars)
+    2. Paywall Patterns: Fails if any paywall-related phrases are found in the first 500 chars
+    3. Link Ratio: Fails if the ratio of markdown links to text length exceeds max_link_ratio (default: 0.3)
+
+    Content is marked as paywall/teaser if at least min_failures_to_reject checks fail.
+
+    Args:
+        markdown_content: The markdown content to check
+        min_content_length: Minimum text length (in chars) to not be considered too short
+        paywall_patterns: List of regex patterns to detect paywall phrases. If None, uses default patterns
+        max_link_ratio: Maximum allowed ratio of markdown links to text length
+        min_failures_to_reject: Minimum number of quality checks that must fail to mark as paywall/teaser
+
+    Returns:
+        True if content appears to be a teaser or behind a paywall
+    """
+    # Remove header metadata lines if present
+    content_lines = markdown_content.strip().split("\n")
+    content_body = "\n".join(
+        [
+            line
+            for line in content_lines
+            if not line.startswith("Date ")
+            and not line.startswith("Title:")
+            and not line.startswith("URL Source:")
+        ]
+    )
+
+    # Strip markdown and get pure text for length check
+    text_only = re.sub(r"\[.*?\]\(.*?\)", "", content_body)  # Remove markdown links
+    text_only = re.sub(r"[#*_`]", "", text_only)  # Remove markdown formatting
+    clean_text = text_only.strip()
+
+    # Track failed checks
+    failed_checks = 0
+
+    # Check for very short content
+    if len(clean_text) < min_content_length:
+        logger.warning(
+            f"Content detected as too short: {len(clean_text)} chars (minimum: {min_content_length})"
+        )
+        failed_checks += 1
+
+    # Get text to check for paywall patterns - just the first few paragraphs
+    sample_text = clean_text[:500].lower()
+
+    # Check for paywall patterns
+    found_pattern, matched_pattern = _check_paywall_patterns(
+        sample_text, paywall_patterns
+    )
+    if found_pattern:
+        logger.info(f"Found paywall pattern: '{matched_pattern}'")
+        failed_checks += 1
+
+    # Check link ratio
+    link_ratio = len(re.findall(r"\[.*?\]\(.*?\)", content_body)) / max(
+        1, len(clean_text) / 100
+    )
+    if link_ratio > max_link_ratio:
+        logger.info(
+            f"Content has high link ratio: {link_ratio:.2f} (maximum: {max_link_ratio})"
+        )
+        failed_checks += 1
+
+    # Only mark as paywall if enough checks failed
+    if failed_checks >= min_failures_to_reject:
+        logger.info(
+            f"Content marked as paywall/teaser: {failed_checks} checks failed (minimum {min_failures_to_reject} required)"
+        )
+        return True
+
+    return False
+
+
+def is_worth_summarizing(
+    markdown_content: str,
+    min_content_length: int = 500,
+    max_punctuation_ratio: float = 0.05,  # 1 ! or ? per 20 chars
+    min_sentences: int = 5,
+    min_paragraphs: int = 3,
+    min_failures_to_reject: int = 3,  # Number of checks that must fail to reject content
+) -> bool:
+    """
+    Determine if content is worth summarizing based on length and quality heuristics.
+
+    Args:
+        markdown_content: The markdown content to check
+        min_content_length: Minimum text length to consider summarizing
+        max_punctuation_ratio: Maximum allowed ratio of ! or ? to total characters
+        min_sentences: Minimum number of sentences required
+        min_paragraphs: Minimum number of paragraphs required
+        min_failures_to_reject: Minimum number of quality checks that must fail to reject content
+
+    Returns:
+        True if content is worth summarizing
+    """
+    # Skip paywall/teaser content - this is an automatic rejection
+    if is_paywall_or_teaser(markdown_content):
+        logger.info("Content is behind paywall or just a teaser, skipping")
+        return False
+
+    # Remove header metadata lines if present
+    content_lines = markdown_content.strip().split("\n")
+    content_body = "\n".join(
+        [
+            line
+            for line in content_lines
+            if not line.startswith("Date ")
+            and not line.startswith("Title:")
+            and not line.startswith("URL Source:")
+        ]
+    )
+
+    # Strip markdown and get pure text for length check
+    text_only = re.sub(r"\[.*?\]\(.*?\)", "", content_body)  # Remove markdown links
+    text_only = re.sub(r"[#*_`]", "", text_only)  # Remove markdown formatting
+    clean_text = text_only.strip()
+
+    # Count failed checks
+    failed_checks = 0
+
+    # Check for minimum content length
+    if len(clean_text) < min_content_length:
+        logger.info(f"Content too short for summarization: {len(clean_text)} chars")
+        failed_checks += 1
+
+    # Check for excessive punctuation or unusual patterns
+    punct_count = len(re.findall(r"[!?]", clean_text))
+    punct_ratio = punct_count / max(1, len(clean_text))
+    if punct_ratio > max_punctuation_ratio:
+        logger.info(
+            f"Content has excessive punctuation: {punct_count} out of {len(clean_text)} chars ({punct_ratio:.4f})"
+        )
+        failed_checks += 1
+
+    # Count sentences as a rough proxy for article development
+    sentences = re.split(r"[.!?]+", clean_text)
+    if len(sentences) < min_sentences:
+        logger.info(
+            f"Content has too few sentences: {len(sentences)} < {min_sentences}"
+        )
+        failed_checks += 1
+
+    # Count paragraphs
+    paragraphs = [p for p in content_body.split("\n\n") if p.strip()]
+    if len(paragraphs) < min_paragraphs:
+        logger.info(
+            f"Content has too few paragraphs: {len(paragraphs)} < {min_paragraphs}"
+        )
+        failed_checks += 1
+
+    # Check if enough checks failed to reject the content
+    if failed_checks >= min_failures_to_reject:
+        logger.info(
+            f"Content failed {failed_checks} quality checks, minimum {min_failures_to_reject} required to reject"
+        )
+        return False
+
+    return True

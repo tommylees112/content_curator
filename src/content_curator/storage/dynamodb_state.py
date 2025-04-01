@@ -455,6 +455,7 @@ class DynamoDBState:
     def update_item(self, item: ContentItem) -> bool:
         """
         Update an item in DynamoDB with the current state of a ContentItem.
+        Preserves existing fields by merging the new item with the existing one.
 
         Args:
             item: The ContentItem to update
@@ -463,17 +464,57 @@ class DynamoDBState:
             True if successful, False otherwise
         """
         try:
-            # Always update the last_updated timestamp
-            item.last_updated = datetime.now().isoformat()
+            # First, get the existing item to ensure we preserve all fields
+            existing_item = self.get_item(item.guid)
 
-            # Convert ContentItem to dictionary for DynamoDB
-            item_dict = item.to_dict()
+            if existing_item:
+                # Create a merged item by starting with existing data
+                # and then updating with the new data (only non-None fields)
+                merged_dict = existing_item.to_dict()
 
-            # Remove the guid from the updates as it's the key
-            guid = item_dict.pop("guid")
+                # Convert new item to dictionary
+                new_dict = item.to_dict()
 
-            # Update the item using the existing update_metadata method
-            return self.update_metadata(guid, item_dict)
+                # Merge fields, only updating those present in the new item
+                # and skipping 'guid' which is the primary key
+                for key, value in new_dict.items():
+                    if key != "guid" and value is not None:
+                        merged_dict[key] = value
+
+                # Always update the last_updated timestamp
+                merged_dict["last_updated"] = datetime.now().isoformat()
+
+                # Log what we're merging for debugging
+                self.logger.debug(
+                    f"Merging item {item.guid} - preserving existing paths: "
+                    f"md_path={merged_dict.get('md_path')}, "
+                    f"summary_path={merged_dict.get('summary_path')}, "
+                    f"short_summary_path={merged_dict.get('short_summary_path')}"
+                )
+
+                # Remove guid which is the primary key - we'll use it separately
+                guid = merged_dict.pop("guid")
+
+                # Update the item using the existing update_metadata method
+                return self.update_metadata(guid, merged_dict)
+            else:
+                # If item doesn't exist yet, just store it normally
+                self.logger.debug(
+                    f"No existing item found for {item.guid}, creating new"
+                )
+
+                # Always update the last_updated timestamp
+                item.last_updated = datetime.now().isoformat()
+
+                # Convert ContentItem to dictionary for DynamoDB
+                item_dict = item.to_dict()
+
+                # Remove the guid from the updates as it's the key
+                guid = item_dict.pop("guid")
+
+                # Update the item using the existing update_metadata method
+                return self.update_metadata(guid, item_dict)
+
         except Exception as e:
             self.logger.error(f"Error updating item {item.guid}: {e}")
             return False

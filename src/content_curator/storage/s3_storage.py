@@ -130,3 +130,41 @@ class S3Storage:
         except Exception as e:
             self.logger.error(f"Error listing objects with prefix {prefix}: {e}")
             return []
+
+    def check_content_exists_at_paths(
+        self, guid: str, path_formats: List[str], configured_path: Optional[str] = None
+    ) -> bool:
+        """
+        Check if content exists at the standard path or the configured path.
+
+        Args:
+            guid: The item's unique identifier
+            path_formats: List of standard path formats (e.g., ["markdown/{guid}.md"])
+            configured_path: The currently configured path to try first (if any)
+
+        Returns:
+            True if content exists at any of the paths, False otherwise
+        """
+        if not guid:
+            return False
+
+        # Try the configured path first if it exists
+        if configured_path:
+            content = self.get_content(configured_path)
+            if content:
+                self.logger.debug(
+                    f"Found content at configured path: {configured_path}"
+                )
+                return True
+
+        # Try each standard path format with the guid
+        for path_format in path_formats:
+            path = path_format.format(guid=guid)
+            # Skip if this is the configured path we already checked
+            if path != configured_path:
+                content = self.get_content(path)
+                if content:
+                    self.logger.debug(f"Found content at standard path: {path}")
+                    return True
+
+        return False

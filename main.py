@@ -282,7 +282,7 @@ def save_last_item(processed_items: List[ContentItem], summarize_flag: bool):
 
 def main():
     """Main entry point for the content curation pipeline."""
-    logger.info(f"{'-' * 80}\n\n main.py execution started\n\n")
+    logger.info(f"\n{'-' * 50}\nmain.py execution started\n{'-' * 50}\n")
     # Load environment variables
     load_dotenv()
 
@@ -341,7 +341,8 @@ def main():
             save_last_item(summarized_items, args.summarize)
 
     # Run curate stage if enabled
-    if args.curate:
+    # if args.curate:
+    if False:
         logger.info("\n\nRunning curate stage...\n\n".upper())
         curated_content = run_curate_stage(
             state_manager,

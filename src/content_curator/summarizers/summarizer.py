@@ -12,6 +12,7 @@ from loguru import logger
 from src.content_curator.models import ContentItem
 from src.content_curator.storage.dynamodb_state import DynamoDBState
 from src.content_curator.storage.s3_storage import S3Storage
+from src.content_curator.utils import is_worth_summarizing
 
 # Define prompt types
 SummaryType = Literal["standard", "brief"]
@@ -256,6 +257,43 @@ class Summarizer:
         self.logger.info(f"Generated both summary types for {len(items)} items")
         return items
 
+    def _check_summary_at_paths(
+        self, item: ContentItem, summary_type: SummaryType
+    ) -> bool:
+        """
+        Check if a summary exists for an item.
+
+        Args:
+            item: The ContentItem to check
+            summary_type: "standard" or "brief"
+
+        Returns:
+            True if the summary exists, False otherwise
+        """
+        if not self.s3_storage or not item.guid:
+            return False
+
+        # Get the configured path from the item
+        configured_path = (
+            item.summary_path if summary_type == "standard" else item.short_summary_path
+        )
+
+        # Define standard path formats - only use the current ones as we'll clean up infrastructure
+        path_formats = []
+        if summary_type == "standard":
+            path_formats = [
+                "processed/summaries/{guid}.md",  # Standard format
+            ]
+        else:  # brief
+            path_formats = [
+                "processed/short_summaries/{guid}.md",  # Standard format
+            ]
+
+        # Use the centralized method in S3Storage
+        return self.s3_storage.check_content_exists_at_paths(
+            guid=item.guid, path_formats=path_formats, configured_path=configured_path
+        )
+
     def summarize_and_update_state(
         self,
         items_to_summarize: List[ContentItem],
@@ -283,41 +321,20 @@ class Summarizer:
         skipped_already_summarized = 0
         skipped_not_worth_summarizing = 0
         skipped_no_markdown = 0
-        skipped_existing_summary = 0
 
         for item in items_to_summarize:
-            # Check if summaries already exist
-            has_standard_summary = bool(item.summary_path)
-            has_brief_summary = bool(item.short_summary_path)
+            # Check if summaries exist at any possible path
+            has_standard_summary = self._check_summary_at_paths(item, "standard")
+            has_brief_summary = self._check_summary_at_paths(item, "brief")
 
-            if has_standard_summary or has_brief_summary:
-                if has_standard_summary:
-                    if overwrite_flag:
-                        self.logger.debug(
-                            f"Item {item.guid} already has standard summary at {item.summary_path}, will be overwritten (overwrite flag is enabled)"
-                        )
-                    else:
-                        self.logger.debug(
-                            f"Item {item.guid} already has standard summary at {item.summary_path}, will be preserved"
-                        )
-                        skipped_existing_summary += 1
-
-                if has_brief_summary:
-                    if overwrite_flag:
-                        self.logger.debug(
-                            f"Item {item.guid} already has brief summary at {item.short_summary_path}, will be overwritten (overwrite flag is enabled)"
-                        )
-                    else:
-                        self.logger.debug(
-                            f"Item {item.guid} already has brief summary at {item.short_summary_path}, will be preserved"
-                        )
-                        # We don't increment the counter again as it's likely both summaries exist or don't
+            self.logger.info(
+                f"Item {item.guid} has standard summary: {has_standard_summary}, brief summary: {has_brief_summary}"
+            )
 
             # Skip already summarized items unless overwrite is enabled
-            # Consider item summarized if standard summary exists
-            if item.summary_path and not overwrite_flag:
-                self.logger.debug(
-                    f"Item '{item.title}' ({item.guid}) already summarized (has summary_path), skipping..."
+            if has_standard_summary and has_brief_summary and not overwrite_flag:
+                self.logger.info(
+                    f"Item '{item.title}' ({item.guid}) already has both summaries, skipping summarization"
                 )
                 summarized_items.append(item)
                 skipped_already_summarized += 1
@@ -329,73 +346,84 @@ class Summarizer:
                 if markdown_content:
                     item.markdown_content = markdown_content
                 else:
-                    self.logger.debug(
-                        f"Could not retrieve markdown content for {item.guid}"
+                    self.logger.info(
+                        f"Could not retrieve markdown content for {item.guid} from {item.md_path}, skipping..."
                     )
                     skipped_no_markdown += 1
                     continue
 
-            # Check if this item should be summarized
-            if item.to_be_summarized is None and item.markdown_content:
-                from src.content_curator.processors.markdown_processor import (
-                    MarkdownProcessor,
+            # ALWAYS evaluate if content is worth summarizing
+            # This is now the ONLY place where to_be_summarized gets set
+            # If item is already marked as a paywall, we don't need to check if it's worth summarizing
+            if item.is_paywall:
+                item.to_be_summarized = False
+                self.logger.info(
+                    f"Item {item.guid} is a paywall, not worth summarizing"
+                )
+            else:
+                # Determine if content is worth summarizing using the utility function
+                item.to_be_summarized = is_worth_summarizing(
+                    item.markdown_content,
+                    min_failures_to_reject=3,  # Require at least 3 failures to reject
                 )
 
-                processor = MarkdownProcessor()
-                item.to_be_summarized = processor.is_worth_summarizing(
-                    item.markdown_content
-                )
-
-                # If the item is determined not to be worth summarizing, update it
                 if not item.to_be_summarized:
-                    item.is_paywall = processor.is_paywall_or_teaser(
-                        item.markdown_content
-                    )
-                    self.state_manager.update_item(item)
+                    self.logger.info(f"Item {item.guid} is not worth summarizing")
+                else:
+                    self.logger.info(f"Item {item.guid} marked for summarization")
+
+            # Update the database with our determination
+            self.state_manager.update_item(item)
 
             # Skip items not worth summarizing
             if not item.to_be_summarized:
-                self.logger.debug(
-                    f"Item '{item.title}' ({item.guid}) marked as not worth summarizing, skipping..."
+                self.logger.info(
+                    f"Item '{item.title}' ({item.guid}) not worth summarizing, skipping..."
                 )
                 summarized_items.append(item)
                 skipped_not_worth_summarizing += 1
                 continue
 
-            # Generate summaries for this item (standard and brief)
-            item = self.summarize_item(item, summary_type="standard")
-            item = self.summarize_item(item, summary_type="brief")
+            summarized = False
 
-            # Store summaries in S3
-            if item.summary and item.summary_path:
-                self.s3_storage.store_content(item.summary_path, item.summary)
+            # Generate missing standard summary for this item if needed
+            if not has_standard_summary or overwrite_flag:
+                self.logger.info(f"Generating standard summary for {item.guid}")
+                item = self.summarize_item(item, summary_type="standard")
+                if item.summary and item.summary_path:
+                    self.s3_storage.store_content(item.summary_path, item.summary)
+                    summarized = True
 
-            if item.short_summary and item.short_summary_path:
-                self.s3_storage.store_content(
-                    item.short_summary_path, item.short_summary
+            # Generate missing brief summary for this item if needed
+            if not has_brief_summary or overwrite_flag:
+                self.logger.info(f"Generating brief summary for {item.guid}")
+                item = self.summarize_item(item, summary_type="brief")
+                if item.short_summary and item.short_summary_path:
+                    self.s3_storage.store_content(
+                        item.short_summary_path, item.short_summary
+                    )
+                    summarized = True
+
+            # Update the item in DynamoDB only if we actually generated summaries
+            if summarized:
+                self.state_manager.update_item(item)
+                self.logger.info(
+                    f"Updated item '{item.title}' ({item.guid}): stored summaries"
                 )
-
-            # Update the item in DynamoDB
-            self.state_manager.update_item(item)
-            self.logger.debug(
-                f"Updated item '{item.title}' ({item.guid}): stored summaries"
-            )
+                items_successfully_summarized += 1
 
             summarized_items.append(item)
-            items_successfully_summarized += 1
 
         # Log summary stats
         total_skipped = (
             skipped_already_summarized
             + skipped_not_worth_summarizing
             + skipped_no_markdown
-            + skipped_existing_summary
         )
         if total_skipped > 0:
             self.logger.warning(
                 f"Skipped summarizing {total_skipped} items: "
                 f"{skipped_already_summarized} already summarized, "
-                f"{skipped_existing_summary} with existing summaries, "
                 f"{skipped_not_worth_summarizing} not worth summarizing, "
                 f"{skipped_no_markdown} missing markdown"
             )
