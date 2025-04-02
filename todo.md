@@ -23,20 +23,8 @@
 - [x] rename RssFetcher to RSSFetcher
 - [x] Create a distributor class that will take in a list of content items and distribute them to the appropriate channels. how to do this in an extensible way (slack, email, whatsapp, html, etc.).
 - [x] deploy this and have it run daily on github actions
-
-## TODO
-- [ ] from the AWSURLDistributor create a view into the LONGER summaries of the curated content so the user can click through and see the full summaries.
-- [ ] codebase follows the dependency injection pattern partially by passing s3_storage and state_manager as parameters rather than importing them globally. Consider extending this pattern to configuration values as well for better maintainability as the application grows.
-- [ ] Add comprehensive unit tests for the ContentItem implementation
-- [ ] Add docstrings explaining the purpose and lifecycle of ContentItem fields
-- [ ] Prepare for potential serverless architecture:
-  - [ ] Create a `functions/` directory with handlers for each pipeline stage
-  - [ ] Implement serverless function entry points for each stage
-  - [ ] Set up infrastructure as code (e.g., AWS SAM or Serverless Framework config)
-- [ ] Improve error handling with specific exception types and retry logic
-- [ ] separation of concerns means that the differnet components do not rely on each other but only on ContentItem, DynamoDBState, S3Storage. Check that all of the components are only using ContentItem, DynamoDBState, S3Storage and utils interfaces and not each other / other components. 
-- [ ] maintain a very strict set of data contracts between the components - define the contracts and enforce them. Where should these be defined? In the directory? in a subdirectory README or the original README? or somewhere else?.
-- [ ] Newsletter should have ability to create a full summary when it does not yet exist
+- [x] from the AWSURLDistributor create a view into the LONGER summaries of the curated content so the user can click through and see the full summaries.
+- [x] Newsletter should have ability to create a full summary when it does not yet exist
 ```python
     def ensure_full_summaries(self, items: List[ContentItem]) -> List[ContentItem]:
         """Ensure all items have full summaries before including in newsletter."""
@@ -74,6 +62,27 @@
         # Then format the newsletter with full summaries
         return self.format_recent_content(items, summary_type="standard")
 ```
+
+## TODO
+- [ ] Describe the images in the standard form summary (`Summarizer prompts`, `standard_prompt.txt`)
+- [ ] think about how to include the most informative images in the newsletter (`Summarizer`)
+- [ ] Links to the content like a table of contents at the start of the curated content (`Curator` and the `EmailDistributor`)
+- [ ] Add randomly from corpus with some probability if the content has already been included 
+- [ ] Assign probability weights to the different rss feeds / sources in the config file `config.py`  and then use these in the `Curator` to determine what gets selected for the newsletter.
+- [ ] move the rss feeds that we are reading into the config file `config.py` 
+- [ ] Have a link underneath each longer form summary which takes you to the longer form url created by the AWS s3 article url. Do we do this in the curator? or at the distribution stage? Does it ruin our separation of concerns if they're combined in each?
+- [ ] codebase follows the dependency injection pattern partially by passing s3_storage and state_manager as parameters rather than importing them globally. Consider extending this pattern to configuration values as well for better maintainability as the application grows.
+- [ ] Add comprehensive unit tests for the ContentItem implementation
+- [ ] Add docstrings explaining the purpose and lifecycle of ContentItem fields
+- [ ] Prepare for potential serverless architecture:
+  - [ ] Create a `functions/` directory with handlers for each pipeline stage
+  - [ ] Implement serverless function entry points for each stage
+  - [ ] Set up infrastructure as code (e.g., AWS SAM or Serverless Framework config)
+- [ ] Improve error handling with specific exception types and retry logic
+- [ ] separation of concerns means that the differnet components do not rely on each other but only on ContentItem, DynamoDBState, S3Storage. Check that all of the components are only using ContentItem, DynamoDBState, S3Storage and utils interfaces and not each other / other components. 
+- [ ] maintain a very strict set of data contracts between the components - define the contracts and enforce them. Where should these be defined? In the directory? in a subdirectory README or the original README? or somewhere else?.
+- [ ] Can we use Astronomer and Airflow to run and orchestrate the pipeline? I'd be intereted to see if and how this works.
+
 ## Architecture Notes
 - Each stage of the pipeline uses the same ContentItem dataclass, with different fields populated at each stage
 - Storage classes (`DynamoDBState`, `S3Storage`) handle serialization/deserialization between ContentItem objects and database/object storage
